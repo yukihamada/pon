@@ -1,0 +1,63 @@
+{
+  "identifier" : "PonStoreKit",
+  "nonConsumableProducts" : [],
+  "nonRenewingSubscriptions" : [],
+  "autoRenewableSubscriptions" : [
+    {
+      "familyShareable" : false,
+      "localizations" : [
+        {
+          "description" : "無制限の契約書作成・AIテンプレート・ウェブ署名など全機能が使い放題",
+          "displayName" : "Proプラン",
+          "locale" : "ja_JP"
+        },
+        {
+          "description" : "Unlimited contracts, AI templates, web signing, and all features",
+          "displayName" : "Pro Plan",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.enablerdao.pon.pro",
+      "referenceName" : "Proプラン",
+      "subscriptionGroupID" : "pon-pro-group",
+      "subscriptions" : [
+        {
+          "duration" : "P1M",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "無制限の契約書作成・AIテンプレート・ウェブ署名など全機能が使い放題",
+              "displayName" : "Proプラン 月額",
+              "locale" : "ja_JP"
+            },
+            {
+              "description" : "Unlimited contracts, AI templates, web signing, and all features",
+              "displayName" : "Pro Plan Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "paymentMode" : "PayAsYouGo",
+          "productID" : "com.enablerdao.pon.pro",
+          "referenceName" : "月額プラン",
+          "recurringSubscriptionPeriod" : "P1M",
+          "subscriptionGroupID" : "pon-pro-group",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "consumableProducts" : [],
+  "settings" : {
+    "_developerTeamID" : "5BV85JW8US",
+    "_failTransactionsEnabled" : false,
+    "_localReceiptURL" : null,
+    "_shouldAddStorePaymentAutomatically" : true,
+    "_timeRate" : 1,
+    "_storefront" : "JPN",
+    "_storeKitErrors" : []
+  },
+  "version" : {
+    "major" : 2,
+    "minor" : 0
+  }
+}

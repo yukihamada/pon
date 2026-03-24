@@ -1,0 +1,10 @@
+target/
+.git/
+.env
+.env.*
+*.md
+.DS_Store
+data/
+*.db
+*.db-wal
+*.db-shm
