@@ -1,5 +1,6 @@
 import StoreKit
 import SwiftUI
+import CryptoKit
 
 @MainActor
 class SubscriptionManager: ObservableObject {
@@ -75,9 +76,16 @@ class SubscriptionManager: ObservableObject {
     }
 
     func activateFounder(code: String) -> Bool {
-        // Founder activation codes (SHA256 hashed for security)
-        let validCodes = ["pon-founder-2026", "enabler-founder"]
-        if validCodes.contains(code.lowercased().trimmingCharacters(in: .whitespaces)) {
+        // Validate via SHA256 hash comparison
+        let input = code.lowercased().trimmingCharacters(in: .whitespaces)
+        guard let data = input.data(using: .utf8) else { return false }
+        let digest = SHA256.hash(data: data)
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        let validHashes = [
+            "0e6d988db1a517a85178adc25b89465ed4771bd8af539065beb42e948819a7ee",
+            "16920e6e4defed0500c34615bfac5d851ef21eaa6b72cd5779cefca75b6f7dd9"
+        ]
+        if validHashes.contains(hex) {
             founderActivated = true
             isPro = true
             isFounder = true

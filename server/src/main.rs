@@ -16,6 +16,15 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use tower_http::cors::{CorsLayer, AllowOrigin};
 
+// HTML escape to prevent XSS
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+     .replace('<', "&lt;")
+     .replace('>', "&gt;")
+     .replace('"', "&quot;")
+     .replace('\'', "&#x27;")
+}
+
 // Simple in-memory rate limiter: token -> attempt count in current window
 type RateLimiter = Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>>;
 
@@ -648,7 +657,10 @@ async fn dashboard_page(
     State(state): State<AppState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Html<String>, (StatusCode, Html<String>)> {
-    let secret = std::env::var("DASHBOARD_SECRET").unwrap_or_else(|_| "pon2026".to_string());
+    let secret = match std::env::var("DASHBOARD_SECRET") {
+        Ok(s) if !s.is_empty() => s,
+        _ => return Err((StatusCode::FORBIDDEN, Html("<h1>Dashboard disabled</h1>".to_string()))),
+    };
     if params.get("secret").map(|s| s.as_str()) != Some(secret.as_str()) {
         return Err((StatusCode::UNAUTHORIZED, Html("<h1>401 Unauthorized</h1><p><a href='/'>トップへ</a></p>".to_string())));
     }
@@ -685,10 +697,13 @@ async fn dashboard_page_inner(state: AppState) -> Html<String> {
             };
             let amt = format_amount(*amount, currency);
             let date = created.split('T').next().unwrap_or(created);
+            let title_e = html_escape(title);
+            let creator_e = html_escape(creator);
+            let client_e = html_escape(client);
             format!(r#"<a href="/sign/{token}" class="contract-row">
                 <div class="cr-main">
-                    <div class="cr-title">{title}</div>
-                    <div class="cr-meta">{creator} ⇄ {client} | {amt}</div>
+                    <div class="cr-title">{title_e}</div>
+                    <div class="cr-meta">{creator_e} ⇄ {client_e} | {amt}</div>
                 </div>
                 <div class="cr-right">
                     {badge}
@@ -803,6 +818,11 @@ async fn create_contract(
     headers: HeaderMap,
     Json(req): Json<CreateContractRequest>,
 ) -> Result<(StatusCode, Json<CreateContractResponse>), (StatusCode, Json<ErrorResponse>)> {
+    // Rate limit: 30 contracts per IP per hour
+    let ip = extract_ip(&headers);
+    if !check_rate_limit(&state.rate_limiter, &format!("create:{}", ip), 30, 3600) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse { error: "Rate limit exceeded".to_string() })));
+    }
     let id = uuid::Uuid::new_v4().to_string();
     // Token handling:
     // - With valid admin_key: any token string allowed
@@ -844,7 +864,8 @@ async fn create_contract(
             let sign_url = format!("{}/sign/{}", state.base_url, token);
             return Ok((StatusCode::CONFLICT, Json(CreateContractResponse { id: token.clone(), token, sign_url })));
         }
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })));
+        eprintln!("[ERROR] create_contract DB: {}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Internal server error".to_string() })));
     }
 
     db::append_audit_log(&db, &id, "contract_created", &ip, &ua, &format!("document_hash: {}", document_hash));
@@ -899,11 +920,10 @@ async fn get_contract(
 
     let contract = stmt
         .query_row(rusqlite::params![id], |row| {
-            let token: String = row.get(1)?;
-            let sign_url = format!("{}/sign/{}", "https://pon.enablerdao.com", token);
+            let _token: String = row.get(1)?;
             Ok(ContractResponse {
                 id: row.get(0)?,
-                token,
+                token: "***".to_string(), // hidden for security
                 title: row.get(2)?,
                 client_name: row.get(3)?,
                 client_email: row.get(4)?,
@@ -921,7 +941,7 @@ async fn get_contract(
                 status: row.get(16)?,
                 created_at: row.get(17)?,
                 attachments_json: row.get(18)?,
-                sign_url,
+                sign_url: "***".to_string(), // hidden for security
             })
         })
         .map_err(|_| {
@@ -987,9 +1007,12 @@ async fn sign_page(
     let client_signed = client_sig.is_some();
 
     let amount_display = format_amount(amount, &currency);
-    let start_display = start_date.unwrap_or_default();
-    let end_display = end_date.unwrap_or_default();
-    let body_html = body_text.replace('\n', "<br>");
+    let start_display = html_escape(&start_date.unwrap_or_default());
+    let end_display = html_escape(&end_date.unwrap_or_default());
+    let body_html = html_escape(&body_text).replace('\n', "<br>");
+    let title = html_escape(&title);
+    let client_name = html_escape(&client_name);
+    let creator_name = html_escape(&creator_name);
 
     let html = render_sign_page(
         &id, &tok, &title, &client_name, type_label, &amount_display,
@@ -1075,19 +1098,30 @@ async fn submit_signature(
         ));
     }
 
+    // Prevent overwriting an existing signature
+    let existing_sig: Option<String> = if req.signer == "creator" {
+        db.query_row("SELECT creator_signature FROM contracts WHERE token = ?1", rusqlite::params![token], |r| r.get(0)).ok().flatten()
+    } else {
+        db.query_row("SELECT client_signature FROM contracts WHERE token = ?1", rusqlite::params![token], |r| r.get(0)).ok().flatten()
+    };
+    if existing_sig.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(ErrorResponse {
+                error: "This party has already signed".to_string(),
+            }),
+        ));
+    }
+
     let ip = extract_ip(&headers);
     let ua = extract_ua(&headers);
 
-    let (sig_col, signed_at_col, ip_col, ua_col) = if req.signer == "creator" {
-        ("creator_signature", "creator_signed_at", "creator_ip", "creator_user_agent")
+    // Use static SQL queries to prevent column injection
+    let query = if req.signer == "creator" {
+        "UPDATE contracts SET creator_signature = ?1, creator_signed_at = ?2, creator_ip = ?3, creator_user_agent = ?4 WHERE token = ?5"
     } else {
-        ("client_signature", "client_signed_at", "client_ip", "client_user_agent")
+        "UPDATE contracts SET client_signature = ?1, client_signed_at = ?2, client_ip = ?3, client_user_agent = ?4 WHERE token = ?5"
     };
-
-    let query = format!(
-        "UPDATE contracts SET {} = ?1, {} = ?2, {} = ?3, {} = ?4 WHERE token = ?5",
-        sig_col, signed_at_col, ip_col, ua_col
-    );
     db.execute(&query, rusqlite::params![req.signature, now, ip, ua, token])
         .map_err(|e| {
             (
