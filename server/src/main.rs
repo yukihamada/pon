@@ -1987,6 +1987,24 @@ async fn favicon_image() -> impl axum::response::IntoResponse {
     )
 }
 
+async fn delete_contract(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let admin_key = headers.get("X-Admin-Key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let admin_secret = env::var("ADMIN_KEY").unwrap_or_default();
+    if admin_secret.is_empty() || admin_key != admin_secret {
+        return Err((StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "Unauthorized".to_string() })));
+    }
+    let db = state.db.lock().unwrap();
+    let deleted = db.execute("DELETE FROM contracts WHERE token = ?1", rusqlite::params![token])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
 #[tokio::main]
 async fn main() {
     let data_dir = env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
@@ -2005,7 +2023,7 @@ async fn main() {
                 || o.starts_with(b"http://localhost")
                 || o.starts_with(b"http://127.0.0.1")
         }))
-        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
     let app = Router::new()
@@ -2016,7 +2034,7 @@ async fn main() {
         .route("/dashboard", get(dashboard_page))
         .route("/api/contracts", post(create_contract))
         .route("/api/contracts/{id}", get(get_contract))
-        .route("/api/contracts/token/{token}", get(get_contract_by_token))
+        .route("/api/contracts/token/{token}", get(get_contract_by_token).delete(delete_contract))
         .route("/api/contracts/{id}/pdf", get(download_pdf))
         .route("/api/contracts/{id}/verify", get(verify_contract))
         .route("/api/sign/{token}", post(submit_signature))
