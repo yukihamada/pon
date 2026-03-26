@@ -24,6 +24,8 @@ struct PonApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear {
                     SeedData.insertIfEmpty(context: container.mainContext)
+                    // Auto-sync all contracts to server on launch
+                    ContractSyncManager.shared.syncAll(context: container.mainContext)
                 }
         }
         .modelContainer(container)

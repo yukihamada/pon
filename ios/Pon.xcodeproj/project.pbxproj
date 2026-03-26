@@ -10,6 +10,7 @@
 		1052F0EC12B96EF296EB724B /* AIContractGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D801AD0AA02D376DCC6CDEB /* AIContractGenerator.swift */; };
 		14545039C205198B6C152610 /* SubscriptionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA49376132448513980038A8 /* SubscriptionManager.swift */; };
 		1B7C2B1A1A9833DFED46B6AA /* AIContractGeneratorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41CC888632F94B79E565AFE2 /* AIContractGeneratorView.swift */; };
+		1BB5D176816BD2F0C12B51A1 /* ContractSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB6AA314730B62DDF3EB07F4 /* ContractSyncManager.swift */; };
 		1C6A9B5419206C45B220FFB8 /* PonApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FCDC9354F81935A3E3C3C4 /* PonApp.swift */; };
 		1FD7F9216EED0C439D907EF7 /* ProGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9764FF760C7EE2C8E932C967 /* ProGateView.swift */; };
 		242F01010F1C843B6ABD5C7F /* NewContractView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D6C9DC6009823AFD151BCC2 /* NewContractView.swift */; };
@@ -51,6 +52,7 @@
 		E1CB2575BFCB325EB67FC1AF /* Pon.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Pon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4F2FA6C62DF465C1AAA3CD5 /* pon.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = pon.wav; sourceTree = "<group>"; };
 		E713CB8ACD89806193FA3914 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		EB6AA314730B62DDF3EB07F4 /* ContractSyncManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractSyncManager.swift; sourceTree = "<group>"; };
 		F601FF58BF1381559E8261B6 /* TemplatePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplatePickerView.swift; sourceTree = "<group>"; };
 		FA49376132448513980038A8 /* SubscriptionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -93,6 +95,7 @@
 				DD4AA0098C44B09D8735F911 /* Contract.swift */,
 				A959D12B68EE52C89FFDF2E8 /* ContractDetailView.swift */,
 				1E4020067D4D672ACE774B13 /* ContractListView.swift */,
+				EB6AA314730B62DDF3EB07F4 /* ContractSyncManager.swift */,
 				772604BE98D22831EFB8D499 /* ContractTemplate.swift */,
 				58C33994CEC4EA09F1E32AB6 /* HomeView.swift */,
 				6D6C9DC6009823AFD151BCC2 /* NewContractView.swift */,
@@ -189,6 +192,7 @@
 				EB90488A394EFC9C5AE4914F /* Contract.swift in Sources */,
 				794F5739111F85BA6C8BCD4B /* ContractDetailView.swift in Sources */,
 				5E9225F53576836936462800 /* ContractListView.swift in Sources */,
+				1BB5D176816BD2F0C12B51A1 /* ContractSyncManager.swift in Sources */,
 				AEAA0D057B43410ACC4E3995 /* ContractTemplate.swift in Sources */,
 				BDDE836FEE16EF9C6C484B3B /* HomeView.swift in Sources */,
 				242F01010F1C843B6ABD5C7F /* NewContractView.swift in Sources */,
