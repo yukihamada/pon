@@ -392,15 +392,22 @@ struct ContractDetailView: View {
         if !creatorEmail.isEmpty { body["creator_email"] = creatorEmail }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { _, res, err in
+            let success: Bool
+            if let http = res as? HTTPURLResponse {
+                success = http.statusCode == 201 || http.statusCode == 200 || http.statusCode == 409
+            } else {
+                success = false
+            }
+
+            // After contract is synced, also send creator signature if it exists
+            if success, let sigData = contract.creatorSignature {
+                let b64 = "data:image/png;base64," + sigData.base64EncodedString()
+                syncSignatureToServer(token: contract.signingToken, signer: "creator", signature: b64)
+            }
+
             DispatchQueue.main.async {
                 isSyncing = false
-                if let http = res as? HTTPURLResponse, http.statusCode == 201 || http.statusCode == 200 {
-                    syncMessage = "✓"
-                } else if let http = res as? HTTPURLResponse, http.statusCode == 409 {
-                    syncMessage = "✓" // Already exists
-                } else {
-                    syncMessage = "再試行してください"
-                }
+                syncMessage = success ? "✓" : "再試行してください"
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { syncMessage = nil }
             }
         }.resume()

@@ -9,6 +9,9 @@ struct SettingsView: View {
     @StateObject private var sub = SubscriptionManager.shared
     @AppStorage("ownerName") private var ownerName = ""
     @AppStorage("ownerEmail") private var ownerEmail = ""
+    @State private var founderCode = ""
+    @State private var founderCodeError: String?
+    @State private var founderCodeSuccess = false
 
     var body: some View {
         NavigationStack {
@@ -17,9 +20,17 @@ struct SettingsView: View {
                 Section {
                     if sub.isPro {
                         HStack {
-                            Label("Proプラン", systemImage: "crown.fill").foregroundStyle(Color.pon)
+                            Label(sub.planName, systemImage: sub.isFounder ? "star.circle.fill" : "crown.fill")
+                                .foregroundStyle(sub.isFounder ? Color.ponAccent : Color.pon)
                             Spacer()
                             Text("有効").foregroundStyle(Color.ponSigned).font(.subheadline.weight(.semibold))
+                        }
+                        if sub.isFounder {
+                            HStack {
+                                Label("特典", systemImage: "gift.fill").foregroundStyle(.secondary)
+                                Spacer()
+                                Text("永久Pro・優先サポート").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         if let exp = sub.expirationDate {
                             HStack {
@@ -48,6 +59,38 @@ struct SettingsView: View {
                         }
                     }
                 } header: { Text("サブスクリプション") }
+
+                // Founder plan activation
+                if !sub.isFounder {
+                    Section {
+                        HStack {
+                            TextField("ファウンダーコードを入力", text: $founderCode)
+                                .textContentType(.oneTimeCode)
+                                .autocapitalization(.none)
+                            Button {
+                                if sub.activateFounder(code: founderCode) {
+                                    founderCodeSuccess = true
+                                    founderCodeError = nil
+                                    founderCode = ""
+                                } else {
+                                    founderCodeError = "無効なコードです"
+                                    founderCodeSuccess = false
+                                }
+                            } label: {
+                                Text("有効化").font(.subheadline.weight(.semibold)).foregroundStyle(Color.pon)
+                            }
+                            .disabled(founderCode.isEmpty)
+                        }
+                        if let err = founderCodeError {
+                            Text(err).font(.caption).foregroundStyle(.red)
+                        }
+                        if founderCodeSuccess {
+                            Label("ファウンダープランが有効になりました", systemImage: "checkmark.circle.fill")
+                                .font(.caption).foregroundStyle(Color.ponSigned)
+                        }
+                    } header: { Text("ファウンダープラン") }
+                    footer: { Text("ファウンダーコードをお持ちの方はここで有効化できます") }
+                }
 
                 Section {
                     HStack {
