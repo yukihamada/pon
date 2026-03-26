@@ -108,8 +108,16 @@ struct NewContractView: View {
                 c.creatorSignedAt = .now
                 c.modifiedAt = .now
                 UserDefaults.standard.set(pngData, forKey: "savedSignature")
-                // Sync contract + signature to server, then show share
+                // Sync contract + signature to server
                 syncContractAndSign(c, signatureData: pngData)
+                // Now celebrate and show share
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                SoundPlayer.shared.play("pon")
+                showCelebration = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    showCelebration = false
+                    showShareAfterSign = true
+                }
             }
             .sheet(isPresented: $showShareAfterSign) {
                 if let c = pendingContract {
@@ -611,28 +619,23 @@ struct NewContractView: View {
         context.insert(c)
         pendingContract = c
 
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        SoundPlayer.shared.play("pon")
-
-        // Check for saved signature (reuse previous)
+        // Immediately go to signature step (no celebration yet)
         if let savedSigData = UserDefaults.standard.data(forKey: "savedSignature") {
-            // Auto-sign with saved signature
+            // Has saved signature — auto-sign, sync, celebrate, share
             c.creatorSignature = savedSigData
             c.creatorSignedAt = .now
             c.modifiedAt = .now
             syncContractAndSign(c, signatureData: savedSigData)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            SoundPlayer.shared.play("pon")
             showCelebration = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 showCelebration = false
                 showShareAfterSign = true
             }
         } else {
-            // No saved signature — prompt user to sign
-            showCelebration = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                showCelebration = false
-                showSignatureForSave = true
-            }
+            // No saved signature — open signature view directly (no celebration)
+            showSignatureForSave = true
         }
     }
 
