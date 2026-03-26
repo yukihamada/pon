@@ -804,10 +804,20 @@ async fn create_contract(
     Json(req): Json<CreateContractRequest>,
 ) -> Result<(StatusCode, Json<CreateContractResponse>), (StatusCode, Json<ErrorResponse>)> {
     let id = uuid::Uuid::new_v4().to_string();
-    // Custom token only allowed with valid admin key
+    // Token handling:
+    // - With valid admin_key: any token string allowed
+    // - Without admin_key: only valid UUID-format tokens accepted (app-generated)
+    // - UNIQUE constraint prevents overwriting existing contracts
     let admin_secret = env::var("ADMIN_KEY").unwrap_or_else(|_| "".to_string());
-    let token = if let (Some(tok), Some(key)) = (&req.token, &req.admin_key) {
-        if !admin_secret.is_empty() && key == &admin_secret {
+    let token = if let Some(tok) = &req.token {
+        if let (Some(key),) = (&req.admin_key,) {
+            if !admin_secret.is_empty() && key == &admin_secret {
+                tok.clone()
+            } else {
+                uuid::Uuid::new_v4().to_string()
+            }
+        } else if uuid::Uuid::parse_str(tok).is_ok() {
+            // App-generated UUID token: allow without admin key
             tok.clone()
         } else {
             uuid::Uuid::new_v4().to_string()
@@ -1935,55 +1945,26 @@ body {{
 }
 
 async fn ogp_image() -> impl axum::response::IntoResponse {
-    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0F0F1A"/>
-      <stop offset="100%" style="stop-color:#1a1a3e"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#7B2FBE"/>
-      <stop offset="100%" style="stop-color:#4CC9F0"/>
-    </linearGradient>
-  </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
-  <rect x="0" y="580" width="1200" height="50" fill="url(#accent)" opacity="0.3"/>
-  <text x="600" y="240" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="120" font-weight="800" fill="url(#accent)">Pon</text>
-  <text x="600" y="320" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="36" fill="#cccccc">電子契約サービス</text>
-  <text x="600" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="24" fill="#888888">契約書の作成・署名・管理をシンプルに</text>
-  <rect x="100" y="460" width="1000" height="2" fill="url(#accent)" opacity="0.3"/>
-  <text x="600" y="520" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" fill="#666666">pon-sign.fly.dev</text>
-</svg>"##;
-
+    static OGP_PNG: &[u8] = include_bytes!("../static/ogp.png");
     (
         axum::http::StatusCode::OK,
         [
-            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            (axum::http::header::CONTENT_TYPE, "image/png"),
             (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        svg,
+        OGP_PNG,
     )
 }
 
 async fn favicon_image() -> impl axum::response::IntoResponse {
-    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#7B2FBE"/>
-      <stop offset="100%" style="stop-color:#4CC9F0"/>
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="#0F0F1A"/>
-  <text x="32" y="46" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="36" font-weight="800" fill="url(#g)">P</text>
-</svg>"##;
-
+    static FAVICON_PNG: &[u8] = include_bytes!("../static/favicon.png");
     (
         axum::http::StatusCode::OK,
         [
-            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            (axum::http::header::CONTENT_TYPE, "image/png"),
             (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        svg,
+        FAVICON_PNG,
     )
 }
 
