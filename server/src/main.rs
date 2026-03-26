@@ -275,6 +275,18 @@ async fn landing_page(State(state): State<AppState>) -> Html<String> {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pon - 電子契約サービス</title>
 <meta name="description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
+<meta property="og:title" content="Pon - 電子契約サービス">
+<meta property="og:description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pon-sign.fly.dev">
+<meta property="og:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta property="og:site_name" content="Pon - 電子契約サービス">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Pon - 電子契約サービス">
+<meta name="twitter:description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
+<meta name="twitter:image" content="https://pon-sign.fly.dev/ogp.png">
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
 *,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
 body {{
@@ -945,7 +957,10 @@ async fn sign_page(
     });
 
     let (id, title, client_name, contract_type, amount, currency, start_date, end_date, body_text, creator_name, creator_sig, client_sig, creator_signed_at, client_signed_at, status, tok) = result.map_err(|_| {
-        (StatusCode::NOT_FOUND, Html("<h1>Contract not found</h1>".to_string()))
+        (StatusCode::NOT_FOUND, Html(r#"<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>契約書が見つかりません - Pon</title>
+<meta property="og:title" content="Pon - 電子契約サービス"><meta property="og:description" content="無料で使える電子契約・署名サービス"><meta property="og:image" content="https://pon-sign.fly.dev/ogp.png"><meta name="twitter:card" content="summary_large_image">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#0F0F1A;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}.c{text-align:center;padding:40px}h1{font-size:24px;margin-bottom:16px}p{color:#888;margin-bottom:24px;font-size:15px}.btn{display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#7B2FBE,#5B1F9E);color:#fff;text-decoration:none;border-radius:12px;font-weight:600;margin:8px}.btn-s{background:rgba(255,255,255,0.08);color:#ccc}</style></head>
+<body><div class="c"><h1>契約書が見つかりません</h1><p>このURLの契約書は存在しないか、削除されています。</p><a href="/" class="btn">新しい契約書を作成</a><br><a href="https://testflight.apple.com/join/XyZdmPVt" class="btn btn-s">Ponアプリをダウンロード</a></div></body></html>"#.to_string()))
     })?;
 
     let type_label = match contract_type.as_str() {
@@ -1569,6 +1584,19 @@ fn render_sign_page(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} - Pon 電子署名</title>
+<meta property="og:title" content="{title} - Pon 電子署名">
+<meta property="og:description" content="{creator_name}さんから署名のリクエストが届いています。Ponで安全に電子署名できます。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pon-sign.fly.dev/sign/{token}">
+<meta property="og:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta property="og:site_name" content="Pon - 電子契約サービス">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{title} - Pon 電子署名">
+<meta name="twitter:description" content="{creator_name}さんから署名のリクエストが届いています。">
+<meta name="twitter:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta name="description" content="Ponで電子契約書に署名できます。安全・簡単・法的有効な電子署名サービス。">
+<link rel="icon" type="image/png" href="/favicon.png">
 <style>
 *,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
 body {{
@@ -1906,6 +1934,59 @@ body {{
 </html>"##)
 }
 
+async fn ogp_image() -> impl axum::response::IntoResponse {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F0F1A"/>
+      <stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#7B2FBE"/>
+      <stop offset="100%" style="stop-color:#4CC9F0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="0" y="580" width="1200" height="50" fill="url(#accent)" opacity="0.3"/>
+  <text x="600" y="240" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="120" font-weight="800" fill="url(#accent)">Pon</text>
+  <text x="600" y="320" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="36" fill="#cccccc">電子契約サービス</text>
+  <text x="600" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="24" fill="#888888">契約書の作成・署名・管理をシンプルに</text>
+  <rect x="100" y="460" width="1000" height="2" fill="url(#accent)" opacity="0.3"/>
+  <text x="600" y="520" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-size="20" fill="#666666">pon-sign.fly.dev</text>
+</svg>"##;
+
+    (
+        axum::http::StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        svg,
+    )
+}
+
+async fn favicon_image() -> impl axum::response::IntoResponse {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7B2FBE"/>
+      <stop offset="100%" style="stop-color:#4CC9F0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0F0F1A"/>
+  <text x="32" y="46" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="36" font-weight="800" fill="url(#g)">P</text>
+</svg>"##;
+
+    (
+        axum::http::StatusCode::OK,
+        [
+            (axum::http::header::CONTENT_TYPE, "image/svg+xml"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        svg,
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let data_dir = env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
@@ -1942,6 +2023,8 @@ async fn main() {
         .route("/api/sign/{token}/verify-email", post(verify_email))
         .route("/api/templates", get(get_templates))
         .route("/sign/{token}", get(sign_page))
+        .route("/ogp.png", get(ogp_image))
+        .route("/favicon.png", get(favicon_image))
         .layer(cors)
         .with_state(state);
 
