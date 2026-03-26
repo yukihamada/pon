@@ -27,6 +27,10 @@ struct NewContractView: View {
     @State private var bodyText = ""
     @State private var aiGenerated = false
     @State private var showCelebration = false
+    @State private var showSignatureForSave = false
+    @State private var pendingContract: Contract?
+    @State private var showShareAfterSign = false
+    @State private var signatureImageForSave: UIImage?
 
     // Attachments
     @State private var showFilePicker = false
@@ -92,6 +96,24 @@ struct NewContractView: View {
                     for url in urls {
                         attachmentNames.append(url.lastPathComponent)
                     }
+                }
+            }
+            .sheet(isPresented: $showSignatureForSave) {
+                SignatureView(signatureImage: $signatureImageForSave)
+            }
+            .onChange(of: signatureImageForSave) { _, newImage in
+                guard let newImage, let c = pendingContract, let pngData = newImage.pngData() else { return }
+                // Save signature to contract and to UserDefaults for reuse
+                c.creatorSignature = pngData
+                c.creatorSignedAt = .now
+                c.modifiedAt = .now
+                UserDefaults.standard.set(pngData, forKey: "savedSignature")
+                // Sync contract + signature to server, then show share
+                syncContractAndSign(c, signatureData: pngData)
+            }
+            .sheet(isPresented: $showShareAfterSign) {
+                if let c = pendingContract {
+                    ContractShareSheet(contract: c)
                 }
             }
         }
@@ -587,15 +609,35 @@ struct NewContractView: View {
         c.contractNumber = Contract.generateNumber(date: startDate, count: all.count)
         for name in attachmentNames { c.addAttachment(name) }
         context.insert(c)
-        // Sync to server so the web signing URL works
-        syncContractToServer(c)
+        pendingContract = c
+
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         SoundPlayer.shared.play("pon")
-        showCelebration = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
+
+        // Check for saved signature (reuse previous)
+        if let savedSigData = UserDefaults.standard.data(forKey: "savedSignature") {
+            // Auto-sign with saved signature
+            c.creatorSignature = savedSigData
+            c.creatorSignedAt = .now
+            c.modifiedAt = .now
+            syncContractAndSign(c, signatureData: savedSigData)
+            showCelebration = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                showCelebration = false
+                showShareAfterSign = true
+            }
+        } else {
+            // No saved signature — prompt user to sign
+            showCelebration = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                showCelebration = false
+                showSignatureForSave = true
+            }
+        }
     }
 
-    private func syncContractToServer(_ c: Contract) {
+    private func syncContractAndSign(_ c: Contract, signatureData: Data) {
+        // Step 1: Create contract on server
         guard let url = URL(string: "https://pon.enablerdao.com/api/contracts") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -618,8 +660,23 @@ struct NewContractView: View {
         let creatorEmail = UserDefaults.standard.string(forKey: "ownerEmail") ?? ""
         if !creatorEmail.isEmpty { body["creator_email"] = creatorEmail }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        URLSession.shared.dataTask(with: req).resume()
+
+        let b64 = "data:image/png;base64," + signatureData.base64EncodedString()
+        let token = c.signingToken
+
+        URLSession.shared.dataTask(with: req) { _, res, _ in
+            // Step 2: Send signature regardless of 201 or 409
+            guard let http = res as? HTTPURLResponse,
+                  http.statusCode == 201 || http.statusCode == 200 || http.statusCode == 409 else { return }
+            guard let sigUrl = URL(string: "https://pon.enablerdao.com/api/sign/\(token)") else { return }
+            var sigReq = URLRequest(url: sigUrl)
+            sigReq.httpMethod = "POST"
+            sigReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            sigReq.httpBody = try? JSONSerialization.data(withJSONObject: ["signer": "creator", "signature": b64])
+            URLSession.shared.dataTask(with: sigReq).resume()
+        }.resume()
     }
+
 
     // MARK: - Helpers
 

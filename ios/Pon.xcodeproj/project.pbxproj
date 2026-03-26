@@ -23,6 +23,7 @@
 		6DFDC4C69B2CA62D9028A520 /* pon.wav in Resources */ = {isa = PBXBuildFile; fileRef = E4F2FA6C62DF465C1AAA3CD5 /* pon.wav */; };
 		794F5739111F85BA6C8BCD4B /* ContractDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A959D12B68EE52C89FFDF2E8 /* ContractDetailView.swift */; };
 		7AE3F8C5A81A93AA0CBE7B2C /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 407498B9D9A1E38B6F66432A /* ContentView.swift */; };
+		81D07D925EC089101BE5AE16 /* ContractShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F06B98622A4A66B6571EC45 /* ContractShareSheet.swift */; };
 		8260A7E30DF9393792B19DB3 /* TemplatePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F601FF58BF1381559E8261B6 /* TemplatePickerView.swift */; };
 		A6A3331F06DA3027EC5F18B8 /* CelebrationEffect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5B7CF39BAAB1C3EFF79619 /* CelebrationEffect.swift */; };
 		AEAA0D057B43410ACC4E3995 /* ContractTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 772604BE98D22831EFB8D499 /* ContractTemplate.swift */; };
@@ -44,6 +45,7 @@
 		7BD0D39FA7A68F638B82D4F0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		896FDDDDB3851E1524062D5F /* SoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundPlayer.swift; sourceTree = "<group>"; };
 		8D2955587A655A02801AFBB8 /* SeedData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeedData.swift; sourceTree = "<group>"; };
+		8F06B98622A4A66B6571EC45 /* ContractShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractShareSheet.swift; sourceTree = "<group>"; };
 		9764FF760C7EE2C8E932C967 /* ProGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProGateView.swift; sourceTree = "<group>"; };
 		A959D12B68EE52C89FFDF2E8 /* ContractDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractDetailView.swift; sourceTree = "<group>"; };
 		A995793DE086F795086E048C /* ReportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportView.swift; sourceTree = "<group>"; };
@@ -95,6 +97,7 @@
 				DD4AA0098C44B09D8735F911 /* Contract.swift */,
 				A959D12B68EE52C89FFDF2E8 /* ContractDetailView.swift */,
 				1E4020067D4D672ACE774B13 /* ContractListView.swift */,
+				8F06B98622A4A66B6571EC45 /* ContractShareSheet.swift */,
 				EB6AA314730B62DDF3EB07F4 /* ContractSyncManager.swift */,
 				772604BE98D22831EFB8D499 /* ContractTemplate.swift */,
 				58C33994CEC4EA09F1E32AB6 /* HomeView.swift */,
@@ -192,6 +195,7 @@
 				EB90488A394EFC9C5AE4914F /* Contract.swift in Sources */,
 				794F5739111F85BA6C8BCD4B /* ContractDetailView.swift in Sources */,
 				5E9225F53576836936462800 /* ContractListView.swift in Sources */,
+				81D07D925EC089101BE5AE16 /* ContractShareSheet.swift in Sources */,
 				1BB5D176816BD2F0C12B51A1 /* ContractSyncManager.swift in Sources */,
 				AEAA0D057B43410ACC4E3995 /* ContractTemplate.swift in Sources */,
 				BDDE836FEE16EF9C6C484B3B /* HomeView.swift in Sources */,
