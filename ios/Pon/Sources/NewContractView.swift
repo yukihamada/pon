@@ -27,6 +27,13 @@ struct NewContractView: View {
     @State private var bodyText = ""
     @State private var aiGenerated = false
     @State private var showCelebration = false
+
+    // Quick-select contract terms
+    @State private var paymentTerm = "一括払い"
+    @State private var contractPeriod = "1年"
+    @State private var jurisdiction = "東京地方裁判所"
+    @State private var warrantyPeriod = "6ヶ月"
+    @State private var confidentialityPeriod = "3年"
     @State private var showSignatureForSave = false
     @State private var pendingContract: Contract?
     @State private var showShareAfterSign = false
@@ -311,10 +318,10 @@ struct NewContractView: View {
 
             // Client
             VStack(alignment: .leading, spacing: 8) {
-                sectionLabel("相手方")
-                TextField("クライアント名", text: $clientName).inputStyle()
+                sectionLabel("相手方（乙）")
+                TextField("会社名 or 個人名", text: $clientName).inputStyle()
                     .onChange(of: clientName) { _, v in if v.count > Self.clientMax { clientName = String(v.prefix(Self.clientMax)) } }
-                TextField("メールアドレス (任意)", text: $clientEmail).inputStyle()
+                TextField("メールアドレス (署名通知用)", text: $clientEmail).inputStyle()
                     .keyboardType(.emailAddress).textContentType(.emailAddress)
             }.padding(16).glassCard()
 
@@ -333,17 +340,82 @@ struct NewContractView: View {
                         Text("JPY").tag("JPY"); Text("USD").tag("USD")
                     }.pickerStyle(.segmented).frame(width: 120)
                 }
+                // Quick amount chips
+                chipRow("金額", ["10万", "30万", "50万", "100万", "300万"]) { val in
+                    let map = ["10万": "100000", "30万": "300000", "50万": "500000", "100万": "1000000", "300万": "3000000"]
+                    amount = map[val] ?? ""
+                }
+            }.padding(16).glassCard()
+
+            // Quick-select contract terms
+            VStack(alignment: .leading, spacing: 12) {
+                sectionLabel("契約条件")
+                chipSelector("支払い条件", options: ["一括払い", "月払い", "着手金+完了時", "分割（3回）"], selection: $paymentTerm)
+                chipSelector("契約期間", options: ["3ヶ月", "6ヶ月", "1年", "2年", "期間なし"], selection: $contractPeriod)
+                chipSelector("秘密保持", options: ["1年", "2年", "3年", "5年"], selection: $confidentialityPeriod)
+                chipSelector("瑕疵担保", options: ["3ヶ月", "6ヶ月", "1年", "なし"], selection: $warrantyPeriod)
+                chipSelector("管轄裁判所", options: ["東京地方裁判所", "大阪地方裁判所", "名古屋地方裁判所", "福岡地方裁判所"], selection: $jurisdiction)
             }.padding(16).glassCard()
 
             // Dates
             VStack(alignment: .leading, spacing: 8) {
-                sectionLabel("期間")
+                sectionLabel("開始日")
                 DatePicker("開始日", selection: $startDate, displayedComponents: .date).tint(Color.pon)
-                Toggle("終了日あり", isOn: $hasEndDate).tint(Color.pon)
-                if hasEndDate {
-                    DatePicker("終了日", selection: $endDate, displayedComponents: .date).tint(Color.pon)
-                }
             }.padding(16).glassCard()
+        }
+        .onChange(of: contractPeriod) { _, val in
+            let map: [String: Int] = ["3ヶ月": 3, "6ヶ月": 6, "1年": 12, "2年": 24]
+            if let months = map[val] {
+                hasEndDate = true
+                endDate = Calendar.current.date(byAdding: .month, value: months, to: startDate) ?? startDate
+            } else {
+                hasEndDate = false
+            }
+        }
+    }
+
+    private func chipSelector(_ label: String, options: [String], selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(options, id: \.self) { opt in
+                        let sel = selection.wrappedValue == opt
+                        Button {
+                            selection.wrappedValue = opt
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        } label: {
+                            Text(opt)
+                                .font(.system(size: 13, weight: sel ? .semibold : .regular))
+                                .foregroundStyle(sel ? .white : .secondary)
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .background(sel ? Color.pon : Color.ponCard)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().strokeBorder(sel ? Color.pon : .white.opacity(0.08), lineWidth: 1))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func chipRow(_ label: String, _ options: [String], action: @escaping (String) -> Void) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(options, id: \.self) { opt in
+                    Button {
+                        action(opt)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    } label: {
+                        Text(opt)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.pon)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Color.pon.opacity(0.08))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
         }
     }
 
@@ -351,50 +423,11 @@ struct NewContractView: View {
 
     private var stepThreeTemplate: some View {
         VStack(spacing: 16) {
-            // Generate from template button
+            // Auto-generate on enter if body is empty
             if bodyText.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    sectionLabel("テンプレートから生成")
-                    Text("種別に合った契約書テンプレートを自動生成します")
-                        .font(.system(size: 13)).foregroundStyle(.secondary)
-                    Button {
-                        generateFromTemplate()
-                    } label: {
-                        HStack {
-                            Image(systemName: "doc.badge.plus")
-                            Text("テンプレートを適用")
-                        }
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, 12)
-                        .background(Color.pon).clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-
-                    // AI option
-                    Button {
-                        generateWithAI()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "sparkles").foregroundStyle(Color.ponAccent)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text("AIで契約書を作成")
-                                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.ponAccent)
-                                if aiGenCount > 0 {
-                                    Text("Pro限定 (無料枠使用済み)")
-                                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                                } else {
-                                    Text("初回1回無料")
-                                        .font(.system(size: 10)).foregroundStyle(Color.ponSigned)
-                                }
-                            }
-                            Spacer()
-                        }
-                        .padding(14)
-                        .background(Color.ponAccent.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.ponAccent.opacity(0.15)))
-                    }
-                    .disabled(aiGenCount > 0) // Pro check would go here
-                }.padding(16).glassCard()
+                Color.clear.frame(height: 0).onAppear {
+                    generateFromTemplate()
+                }
             }
 
             // Editable body
@@ -575,13 +608,18 @@ struct NewContractView: View {
 
     private func generateFromTemplate() {
         guard let tmpl = selectedTemplate ?? ContractTemplate.builtIn.first(where: { $0.id == contractType }) else { return }
+        let ownerName = UserDefaults.standard.string(forKey: "ownerName") ?? ""
         bodyText = tmpl.fillPlaceholders(
             title: title,
-            creatorName: "Yuki Hamada",
+            creatorName: ownerName,
             clientName: clientName,
             amount: amountDisplay,
             startDate: startDate,
-            endDate: hasEndDate ? endDate : nil
+            endDate: hasEndDate ? endDate : nil,
+            paymentTerm: paymentTerm,
+            warrantyPeriod: warrantyPeriod,
+            confidentialityPeriod: confidentialityPeriod,
+            jurisdiction: jurisdiction
         )
     }
 
