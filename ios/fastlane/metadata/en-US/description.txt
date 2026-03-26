@@ -1,0 +1,36 @@
+"It's decided, Pon!"
+
+Pon is a simple electronic contract and signature service that lets you create, sign, and manage contracts entirely from your iPhone.
+
+■ Perfect for
+• Freelancers and sole proprietors
+• Startups and small businesses
+• Anyone who regularly needs NDAs, service agreements, and business contracts
+
+■ Key Features
+
+[Contract Creation]
+• 5 built-in templates: NDA, Service Agreement, Maintenance, Consulting, Sales
+• AI-powered contract generation (first use free)
+• Fully editable contract text
+
+[Electronic Signatures]
+• Draw your signature with your finger
+• Share a URL — the other party signs in their browser
+• Two-party signing (Party A and Party B)
+
+[Security]
+• SHA-256 document hash for tamper detection
+• IP address, timestamp, and User-Agent logged at signing
+• Legally valid electronic signatures under Japan's Electronic Signature Act
+
+[Management]
+• Track all contracts in one place
+• Monthly reports showing contract amounts and counts
+• Status tracking: Draft → Sent → Signed → Active
+
+■ About Pon
+Basic features are free. The Pro plan unlocks unlimited contracts and AI templates.
+
+■ Security
+All communications are encrypted via HTTPS (TLS). Signature data is stored securely on your iPhone.

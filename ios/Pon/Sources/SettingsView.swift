@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var showDeleteAlert = false
     @State private var showProGate = false
     @StateObject private var sub = SubscriptionManager.shared
+    @AppStorage("ownerName") private var ownerName = ""
+    @AppStorage("ownerEmail") private var ownerEmail = ""
 
     var body: some View {
         NavigationStack {
@@ -66,6 +68,27 @@ struct SettingsView: View {
                     sisterRow("ポイッ", sub: "不用品の出品・査定サポート", icon: "shippingbox.fill", hex: "06D6A0", url: "https://pasha.run/poi")
                     sisterRow("サクッ", sub: "確定申告・青色申告対応", icon: "checkmark.seal.fill", hex: "3B82F6", url: "https://pasha.run/sakutsu")
                 } header: { Text("姉妹アプリ") }
+
+                Section {
+                    HStack {
+                        Label("名前（甲）", systemImage: "person.fill").foregroundStyle(Color.pon)
+                        Spacer()
+                        TextField("例: 山田太郎", text: $ownerName)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Label("メール（甲）", systemImage: "envelope.fill").foregroundStyle(Color.pon)
+                        Spacer()
+                        TextField("例: you@example.com", text: $ownerEmail)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(.secondary)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .autocapitalization(.none)
+                    }
+                } header: { Text("あなたの情報（署名者甲）") }
+                footer: { Text("Webで署名するときのメール確認に使われます") }
 
                 Section {
                     HStack { Text("バージョン"); Spacer(); Text("1.0.0").foregroundStyle(.secondary) }

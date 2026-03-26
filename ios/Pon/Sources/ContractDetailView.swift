@@ -20,6 +20,8 @@ struct ContractDetailView: View {
     @State private var showSignLinkCopied = false
     @State private var showShareSheet = false
     @State private var shareURL: URL?
+    @State private var isSyncing = false
+    @State private var syncMessage: String? = nil
 
     private let nextStatus: [String: String] = [
         "draft": "sent", "sent": "signed", "signed": "active"
@@ -136,6 +138,31 @@ struct ContractDetailView: View {
                     }
                     .glassCard()
                 }
+
+                // Sync to server button
+                VStack(spacing: 8) {
+                    Button {
+                        syncContractToServer()
+                    } label: {
+                        HStack {
+                            if isSyncing {
+                                ProgressView().scaleEffect(0.8).tint(Color.ponAccent)
+                            } else {
+                                Image(systemName: syncMessage == "✓" ? "checkmark.circle.fill" : "icloud.and.arrow.up")
+                            }
+                            Text(isSyncing ? "同期中..." : syncMessage ?? "サーバーに同期")
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(syncMessage == "✓" ? Color.ponSigned : Color.ponAccent)
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background((syncMessage == "✓" ? Color.ponSigned : Color.ponAccent).opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .disabled(isSyncing)
+                    Text("署名URLをWebで使えるようにします")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }.padding(16).glassCard()
 
                 // Web signing link
                 VStack(spacing: 10) {
@@ -290,24 +317,19 @@ struct ContractDetailView: View {
             contract.creatorSignedAt = .now
             contract.modifiedAt = .now
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            // Sync creator signature to server
+            let b64 = "data:image/png;base64," + pngData.base64EncodedString()
+            syncSignatureToServer(token: contract.signingToken, signer: "creator", signature: b64)
+        }
+        .onAppear {
+            fetchStatusFromServer()
         }
     }
 
     private func generateSigningLink() {
-        // Build a compact payload: title|clientName|bodyText
-        let payload = [contract.title, contract.clientName, contract.bodyText].joined(separator: "\u{001F}")
-        guard let data = payload.data(using: .utf8) else { return }
-        let encoded = data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        let urlString = "https://pasha.run/sign?data=\(encoded)"
-
-        // Copy to clipboard
+        let urlString = contract.signURL  // https://pon-sign.fly.dev/sign/{signingToken}
         UIPasteboard.general.string = urlString
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-
-        // Show copied state briefly
         withAnimation { showSignLinkCopied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if let url = URL(string: urlString) {
@@ -342,6 +364,77 @@ struct ContractDetailView: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .overlay(alignment: .bottom) { Rectangle().fill(.white.opacity(0.04)).frame(height: 0.5) }
+    }
+
+    private func syncContractToServer() {
+        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts") else { return }
+        isSyncing = true
+        syncMessage = nil
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let df = ISO8601DateFormatter()
+        df.formatOptions = [.withFullDate]
+        var body: [String: Any] = [
+            "token": contract.signingToken,
+            "title": contract.title,
+            "client_name": contract.clientName,
+            "contract_type": contract.contractType,
+            "amount": contract.amount,
+            "currency": contract.currency,
+            "body_text": contract.bodyText.isEmpty ? "(本文未入力)" : contract.bodyText,
+            "creator_name": UserDefaults.standard.string(forKey: "ownerName") ?? "作成者",
+            "start_date": df.string(from: contract.startDate),
+        ]
+        if !contract.clientEmail.isEmpty { body["client_email"] = contract.clientEmail }
+        if let end = contract.endDate { body["end_date"] = df.string(from: end) }
+        let creatorEmail = UserDefaults.standard.string(forKey: "ownerEmail") ?? ""
+        if !creatorEmail.isEmpty { body["creator_email"] = creatorEmail }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req) { _, res, err in
+            DispatchQueue.main.async {
+                isSyncing = false
+                if let http = res as? HTTPURLResponse, http.statusCode == 201 || http.statusCode == 200 {
+                    syncMessage = "✓"
+                } else if let http = res as? HTTPURLResponse, http.statusCode == 409 {
+                    syncMessage = "✓" // Already exists
+                } else {
+                    syncMessage = "再試行してください"
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { syncMessage = nil }
+            }
+        }.resume()
+    }
+
+    private func syncSignatureToServer(token: String, signer: String, signature: String) {
+        guard let url = URL(string: "https://pon-sign.fly.dev/api/sign/\(token)") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["signer": signer, "signature": signature])
+        URLSession.shared.dataTask(with: req).resume()
+    }
+
+    private func fetchStatusFromServer() {
+        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts/\(contract.id)") else { return }
+        // Try by id first; the server contract may not match local id, so also try token-based lookup
+        // For now we check via sign page endpoint which uses token
+        guard let statusUrl = URL(string: "https://pon-sign.fly.dev/api/contracts/token/\(contract.signingToken)") else { return }
+        URLSession.shared.dataTask(with: URLRequest(url: statusUrl)) { data, _, _ in
+            guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            DispatchQueue.main.async {
+                if let status = json["status"] as? String {
+                    contract.status = status == "completed" ? "signed" : contract.status
+                }
+                if let clientSig = json["client_signature"] as? String, !clientSig.isEmpty,
+                   contract.clientSignature == nil,
+                   let sigData = Data(base64Encoded: clientSig.replacingOccurrences(of: "data:image/png;base64,", with: "")) {
+                    contract.clientSignature = sigData
+                    contract.clientSignedAt = .now
+                    contract.modifiedAt = .now
+                }
+            }
+        }.resume()
     }
 
     private var contractText: String {

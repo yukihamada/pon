@@ -56,6 +56,7 @@ pub fn init_db(data_dir: &str) -> Db {
         ("client_email_verified", "INTEGER DEFAULT 0"),
         ("agreement_text", "TEXT"),
         ("audit_log", "TEXT DEFAULT '[]'"),
+        ("creator_email", "TEXT"),
     ];
     for (col, typ) in &new_columns {
         let sql = format!("ALTER TABLE contracts ADD COLUMN {} {}", col, typ);

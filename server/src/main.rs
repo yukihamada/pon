@@ -12,7 +12,27 @@ use db::Db;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::env;
-use tower_http::cors::CorsLayer;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use tower_http::cors::{CorsLayer, AllowOrigin};
+
+// Simple in-memory rate limiter: token -> attempt count in current window
+type RateLimiter = Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>>;
+
+fn check_rate_limit(limiter: &RateLimiter, key: &str, max: u32, window_secs: u64) -> bool {
+    let mut map = limiter.lock().unwrap();
+    let now = std::time::Instant::now();
+    let entry = map.entry(key.to_string()).or_insert((0, now));
+    if now.duration_since(entry.1).as_secs() > window_secs {
+        *entry = (1, now);
+        true
+    } else if entry.0 < max {
+        entry.0 += 1;
+        true
+    } else {
+        false
+    }
+}
 
 fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
@@ -38,6 +58,7 @@ fn extract_ua(headers: &HeaderMap) -> String {
 struct AppState {
     db: Db,
     base_url: String,
+    rate_limiter: RateLimiter,
 }
 
 // --- Request / Response types ---
@@ -47,6 +68,7 @@ struct CreateContractRequest {
     title: String,
     client_name: String,
     client_email: Option<String>,
+    creator_email: Option<String>,
     contract_type: String,
     amount: Option<i64>,
     currency: Option<String>,
@@ -55,6 +77,14 @@ struct CreateContractRequest {
     body_text: String,
     creator_name: Option<String>,
     attachments_json: Option<String>,
+    // token override only allowed with admin key
+    token: Option<String>,
+    admin_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct VerifyEmailRequest {
+    email: String,
 }
 
 #[derive(Serialize)]
@@ -112,13 +142,667 @@ async fn health() -> &'static str {
     "ok"
 }
 
+async fn privacy_page() -> Html<&'static str> {
+    Html(r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>プライバシーポリシー - Pon</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif; max-width: 680px; margin: 0 auto; padding: 24px 16px 60px; background: #0F0F1A; color: #e0e0e0; line-height: 1.8; }
+h1 { background: linear-gradient(135deg, #7B2FBE, #4CC9F0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; margin-bottom: 8px; }
+h2 { color: #fff; font-size: 18px; margin-top: 32px; }
+p, li { color: #ccc; font-size: 14px; }
+a { color: #7B2FBE; }
+.updated { color: #888; font-size: 13px; margin-bottom: 32px; }
+</style>
+</head>
+<body>
+<h1>Pon プライバシーポリシー</h1>
+<div class="updated">最終更新: 2026年3月26日</div>
+
+<p>Enabler DAO（以下「当社」）は、電子契約・署名サービス「Pon」（以下「本サービス」）におけるユーザーの個人情報の取り扱いについて、以下のとおりプライバシーポリシーを定めます。</p>
+
+<h2>1. 収集する情報</h2>
+<p>本サービスでは、以下の情報を収集することがあります。</p>
+<ul>
+  <li><strong>氏名・メールアドレス</strong>: 契約書作成時および署名時に入力された情報</li>
+  <li><strong>電子署名データ</strong>: 手書き署名の画像データ（PNG形式）</li>
+  <li><strong>IPアドレス・User-Agent</strong>: 不正利用防止のための監査ログ</li>
+  <li><strong>契約書の内容</strong>: ユーザーが入力した契約書テキスト</li>
+</ul>
+
+<h2>2. 情報の利用目的</h2>
+<ul>
+  <li>電子契約・署名サービスの提供</li>
+  <li>契約の真正性・改ざん検知のための記録</li>
+  <li>不正利用の防止</li>
+  <li>サービスの改善</li>
+</ul>
+
+<h2>3. 情報の第三者提供</h2>
+<p>当社は、法令に基づく場合を除き、ユーザーの同意なく個人情報を第三者に提供しません。</p>
+
+<h2>4. データの保管</h2>
+<p>契約データはFly.io（東京リージョン）のサーバーに暗号化通信（HTTPS）を用いて保管されます。iOSアプリのデータはデバイス内のSwiftDataにローカル保管されます。</p>
+
+<h2>5. データの削除</h2>
+<p>データの削除を希望される場合は、下記の連絡先までお問い合わせください。</p>
+
+<h2>6. セキュリティ</h2>
+<ul>
+  <li>全通信はHTTPS（TLS 1.2以上）で暗号化</li>
+  <li>署名URLはランダムなUUIDトークンで保護</li>
+  <li>文書ハッシュ（SHA-256）による改ざん検知</li>
+  <li>アクセスログの記録（IP・タイムスタンプ・User-Agent）</li>
+</ul>
+
+<h2>7. お問い合わせ</h2>
+<p>個人情報の取り扱いに関するお問い合わせは、以下までご連絡ください。<br>
+メール: <a href="mailto:info@enablerdao.com">info@enablerdao.com</a></p>
+
+<h2>8. ポリシーの変更</h2>
+<p>本ポリシーは予告なく変更することがあります。重要な変更がある場合はアプリ内でお知らせします。</p>
+</body>
+</html>"#)
+}
+
+async fn terms_page() -> Html<&'static str> {
+    Html(r#"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>利用規約 - Pon</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif; max-width: 680px; margin: 0 auto; padding: 24px 16px 60px; background: #0F0F1A; color: #e0e0e0; line-height: 1.8; }
+h1 { background: linear-gradient(135deg, #7B2FBE, #4CC9F0); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; margin-bottom: 8px; }
+h2 { color: #fff; font-size: 18px; margin-top: 32px; }
+p, li { color: #ccc; font-size: 14px; }
+a { color: #7B2FBE; }
+.updated { color: #888; font-size: 13px; margin-bottom: 32px; }
+</style>
+</head>
+<body>
+<h1>Pon 利用規約</h1>
+<div class="updated">最終更新: 2026年3月26日</div>
+
+<h2>第1条（サービスの目的）</h2>
+<p>本サービスは、電子契約書の作成・署名・管理を支援するツールです。電子署名法に基づく電子署名として利用することができます。</p>
+
+<h2>第2条（利用条件）</h2>
+<ul>
+  <li>本サービスは18歳以上の方が利用できます</li>
+  <li>違法・不正な目的での使用は禁止します</li>
+  <li>他者を欺く目的での署名は禁止します</li>
+</ul>
+
+<h2>第3条（法的効力）</h2>
+<p>本サービスで作成・署名した電子契約書は、電子署名法および民法の規定に基づき法的効力を持ちます。ただし、法的効力の最終的な判断は当事者および専門家（弁護士等）の確認をお勧めします。</p>
+
+<h2>第4条（免責事項）</h2>
+<p>当社は、本サービスを利用して締結された契約の内容・効力・履行について一切の責任を負いません。契約内容の適法性・有効性についてはユーザーご自身の責任でご確認ください。</p>
+
+<h2>第5条（サービスの変更・停止）</h2>
+<p>当社は、予告なくサービスの内容を変更または停止する場合があります。</p>
+
+<h2>第6条（準拠法・管轄）</h2>
+<p>本規約は日本法に準拠し、東京地方裁判所を専属的合意管轄裁判所とします。</p>
+
+<h2>お問い合わせ</h2>
+<p>メール: <a href="mailto:info@enablerdao.com">info@enablerdao.com</a></p>
+</body>
+</html>"#)
+}
+
+async fn landing_page(State(state): State<AppState>) -> Html<String> {
+    let templates = templates_data::get_templates();
+    let template_options: String = templates.iter().map(|t| {
+        format!(r#"<option value="{}" data-body="{}">{}</option>"#,
+            t.id, t.body.replace('"', "&quot;").replace('\n', "\\n"), t.name)
+    }).collect::<Vec<_>>().join("\n");
+
+    let db = state.db.lock().unwrap();
+    let count: i64 = db.query_row("SELECT COUNT(*) FROM contracts", [], |r| r.get(0)).unwrap_or(0);
+    let signed: i64 = db.query_row("SELECT COUNT(*) FROM contracts WHERE status='completed'", [], |r| r.get(0)).unwrap_or(0);
+    drop(db);
+
+    Html(format!(r##"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pon - 電子契約サービス</title>
+<meta name="description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
+<style>
+*,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+    background: #0F0F1A;
+    color: #e0e0e0;
+    min-height: 100vh;
+}}
+.container {{ max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }}
+.hero {{
+    text-align: center;
+    padding: 48px 0 32px;
+}}
+.logo {{
+    font-size: 48px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #7B2FBE, #4CC9F0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 3px;
+}}
+.tagline {{
+    font-size: 18px;
+    color: #aaa;
+    margin-top: 8px;
+}}
+.stats {{
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    margin-top: 24px;
+}}
+.stat {{ text-align: center; }}
+.stat-num {{
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #7B2FBE, #4CC9F0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}}
+.stat-label {{ font-size: 12px; color: #888; margin-top: 2px; }}
+.card {{
+    background: #16213E;
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(123,47,190,0.2);
+}}
+.card-title {{
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: #fff;
+}}
+.form-group {{
+    margin-bottom: 16px;
+}}
+.form-group label {{
+    display: block;
+    font-size: 13px;
+    color: #aaa;
+    margin-bottom: 6px;
+    font-weight: 500;
+}}
+.form-group input, .form-group select, .form-group textarea {{
+    width: 100%;
+    padding: 12px 14px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    color: #e0e0e0;
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+}}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {{
+    border-color: #7B2FBE;
+}}
+.form-group textarea {{
+    min-height: 200px;
+    resize: vertical;
+    line-height: 1.7;
+}}
+.form-row {{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}}
+.btn {{
+    padding: 14px 24px;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+}}
+.btn-primary {{
+    width: 100%;
+    background: linear-gradient(135deg, #7B2FBE, #5B1F9E);
+    color: #fff;
+    font-size: 17px;
+    padding: 16px;
+}}
+.btn-primary:hover {{ transform: translateY(-1px); box-shadow: 0 4px 20px rgba(123,47,190,0.4); }}
+.btn-primary:disabled {{ opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }}
+.btn-outline {{
+    background: transparent;
+    color: #7B2FBE;
+    border: 1px solid #7B2FBE;
+    padding: 12px 20px;
+    font-size: 14px;
+}}
+.btn-outline:hover {{ background: rgba(123,47,190,0.1); }}
+.nav-links {{
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 16px;
+}}
+.features {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+}}
+.feature {{
+    background: rgba(123,47,190,0.08);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}}
+.feature-icon {{ font-size: 28px; margin-bottom: 6px; }}
+.feature-text {{ font-size: 12px; color: #aaa; }}
+.footer {{
+    text-align: center;
+    padding: 24px 0;
+    font-size: 12px;
+    color: #555;
+}}
+.loading {{
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+    color: #4CC9F0;
+}}
+.spinner {{
+    width: 24px; height: 24px;
+    border: 3px solid rgba(76,201,240,0.2);
+    border-top-color: #4CC9F0;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+@media (max-width: 480px) {{
+    .form-row {{ grid-template-columns: 1fr; }}
+    .features {{ grid-template-columns: 1fr; }}
+    .hero {{ padding: 32px 0 24px; }}
+    .logo {{ font-size: 36px; }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="hero">
+        <div class="logo">Pon</div>
+        <div class="tagline">決まった、ポン。電子契約サービス</div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-num">{count}</div>
+                <div class="stat-label">契約書作成</div>
+            </div>
+            <div class="stat">
+                <div class="stat-num">{signed}</div>
+                <div class="stat-label">署名完了</div>
+            </div>
+        </div>
+        <div class="nav-links">
+            <a href="/dashboard" class="btn btn-outline">契約一覧</a>
+        </div>
+    </div>
+
+    <div class="features">
+        <div class="feature">
+            <div class="feature-icon">&#9997;</div>
+            <div class="feature-text">手書き電子署名</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">&#128279;</div>
+            <div class="feature-text">URLで共有</div>
+        </div>
+        <div class="feature">
+            <div class="feature-icon">&#128274;</div>
+            <div class="feature-text">改ざん検知</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">新しい契約書を作成</div>
+        <form id="create-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>契約種別</label>
+                    <select id="f-type" required>
+                        {template_options}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>契約タイトル</label>
+                    <input type="text" id="f-title" placeholder="例: システム開発業務委託契約" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>甲（作成者）名</label>
+                    <input type="text" id="f-creator" placeholder="例: 山田太郎" required>
+                </div>
+                <div class="form-group">
+                    <label>乙（署名者）名</label>
+                    <input type="text" id="f-client" placeholder="例: 佐藤花子" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>乙のメールアドレス（任意）</label>
+                    <input type="email" id="f-email" placeholder="例: client@example.com">
+                </div>
+                <div class="form-group">
+                    <label>金額（円）</label>
+                    <input type="number" id="f-amount" placeholder="例: 500000" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>開始日</label>
+                    <input type="date" id="f-start">
+                </div>
+                <div class="form-group">
+                    <label>終了日</label>
+                    <input type="date" id="f-end">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>契約本文</label>
+                <textarea id="f-body" placeholder="テンプレートを選択すると自動入力されます" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" id="btn-create">契約書を作成して署名へ</button>
+            <div class="loading" id="creating">
+                <div class="spinner"></div>
+                <span>作成中...</span>
+            </div>
+        </form>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(123,47,190,0.1);border:1px solid rgba(123,47,190,0.25);border-radius:14px;padding:14px 18px;margin-bottom:16px;">
+        <div>
+            <div style="font-size:14px;font-weight:700;color:#fff;">Ponアプリ（無料）</div>
+            <div style="font-size:11px;color:#aaa;margin-top:2px;">iPhoneで契約書を作成・管理・署名</div>
+        </div>
+        <a href="https://testflight.apple.com/join/XyZdmPVt" target="_blank"
+           style="display:flex;align-items:center;gap:6px;background:#7B2FBE;color:#fff;text-decoration:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;white-space:nowrap;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            App Store
+        </a>
+    </div>
+    <div class="footer">
+        Powered by Pon &mdash; Secure Digital Contracts
+    </div>
+</div>
+<script>
+(function() {{
+    const typeSelect = document.getElementById('f-type');
+    const bodyText = document.getElementById('f-body');
+    const titleInput = document.getElementById('f-title');
+
+    function fillTemplate() {{
+        const opt = typeSelect.options[typeSelect.selectedIndex];
+        const body = opt.dataset.body || '';
+        bodyText.value = body.replace(/\\n/g, '\n');
+        if (!titleInput.value) {{
+            titleInput.value = opt.textContent;
+        }}
+    }}
+    typeSelect.addEventListener('change', fillTemplate);
+    fillTemplate();
+
+    // Set default dates
+    const today = new Date();
+    document.getElementById('f-start').value = today.toISOString().split('T')[0];
+    const oneYear = new Date(today);
+    oneYear.setFullYear(oneYear.getFullYear() + 1);
+    document.getElementById('f-end').value = oneYear.toISOString().split('T')[0];
+
+    document.getElementById('create-form').addEventListener('submit', async function(e) {{
+        e.preventDefault();
+        const btn = document.getElementById('btn-create');
+        const loading = document.getElementById('creating');
+        btn.disabled = true;
+        loading.style.display = 'flex';
+
+        // Replace placeholders
+        let body = bodyText.value;
+        const creator = document.getElementById('f-creator').value;
+        const client = document.getElementById('f-client').value;
+        const amount = document.getElementById('f-amount').value || '0';
+        const start = document.getElementById('f-start').value;
+        const end = document.getElementById('f-end').value;
+        body = body.replace(/\{{creator_name\}}/g, creator)
+                   .replace(/\{{client_name\}}/g, client)
+                   .replace(/\{{amount\}}/g, Number(amount).toLocaleString())
+                   .replace(/\{{start_date\}}/g, start)
+                   .replace(/\{{end_date\}}/g, end)
+                   .replace(/\{{description\}}/g, document.getElementById('f-title').value);
+
+        try {{
+            const res = await fetch('/api/contracts', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{
+                    title: document.getElementById('f-title').value,
+                    client_name: client,
+                    client_email: document.getElementById('f-email').value || null,
+                    contract_type: typeSelect.value,
+                    amount: parseInt(amount) || 0,
+                    currency: 'JPY',
+                    start_date: start,
+                    end_date: end,
+                    body_text: body,
+                    creator_name: creator,
+                }})
+            }});
+            const data = await res.json();
+            if (data.sign_url) {{
+                window.location.href = data.sign_url;
+            }} else {{
+                alert('エラー: ' + (data.error || '作成に失敗しました'));
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }}
+        }} catch(err) {{
+            alert('通信エラー: ' + err.message);
+            btn.disabled = false;
+            loading.style.display = 'none';
+        }}
+    }});
+}})();
+</script>
+</body>
+</html>"##))
+}
+
+async fn dashboard_page(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Html<String>, (StatusCode, Html<String>)> {
+    let secret = std::env::var("DASHBOARD_SECRET").unwrap_or_else(|_| "pon2026".to_string());
+    if params.get("secret").map(|s| s.as_str()) != Some(secret.as_str()) {
+        return Err((StatusCode::UNAUTHORIZED, Html("<h1>401 Unauthorized</h1><p><a href='/'>トップへ</a></p>".to_string())));
+    }
+    Ok(dashboard_page_inner(state).await)
+}
+
+async fn dashboard_page_inner(state: AppState) -> Html<String> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db.prepare(
+        "SELECT id, token, title, client_name, contract_type, amount, currency, status, created_at, creator_name FROM contracts ORDER BY created_at DESC LIMIT 100"
+    ).unwrap();
+    let contracts: Vec<(String,String,String,String,String,i64,String,String,String,String)> = stmt.query_map([], |row| {
+        Ok((
+            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
+            row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
+            row.get(8)?, row.get(9)?,
+        ))
+    }).unwrap().filter_map(|r| r.ok()).collect();
+    drop(stmt);
+    drop(db);
+
+    let rows_html: String = if contracts.is_empty() {
+        r#"<div style="text-align:center;padding:48px 16px;color:#888;">
+            <div style="font-size:48px;margin-bottom:16px;">&#128196;</div>
+            <p>まだ契約書がありません</p>
+            <a href="/" class="btn btn-primary" style="margin-top:16px;display:inline-block;width:auto;padding:12px 32px;">最初の契約書を作成</a>
+        </div>"#.to_string()
+    } else {
+        contracts.iter().map(|(_id, token, title, client, _ctype, amount, currency, status, created, creator)| {
+            let badge = match status.as_str() {
+                "completed" => r#"<span class="badge badge-complete">完了</span>"#,
+                "creator_signed" => r#"<span class="badge badge-partial">甲署名済</span>"#,
+                _ => r#"<span class="badge badge-pending">署名待ち</span>"#,
+            };
+            let amt = format_amount(*amount, currency);
+            let date = created.split('T').next().unwrap_or(created);
+            format!(r#"<a href="/sign/{token}" class="contract-row">
+                <div class="cr-main">
+                    <div class="cr-title">{title}</div>
+                    <div class="cr-meta">{creator} ⇄ {client} | {amt}</div>
+                </div>
+                <div class="cr-right">
+                    {badge}
+                    <div class="cr-date">{date}</div>
+                </div>
+            </a>"#)
+        }).collect()
+    };
+
+    Html(format!(r##"<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>契約一覧 - Pon</title>
+<style>
+*,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+    background: #0F0F1A;
+    color: #e0e0e0;
+    min-height: 100vh;
+}}
+.container {{ max-width: 720px; margin: 0 auto; padding: 20px 16px 40px; }}
+.header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 0 24px;
+}}
+.logo {{
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #7B2FBE, #4CC9F0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-decoration: none;
+}}
+.btn {{
+    padding: 10px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    color: #fff;
+    background: linear-gradient(135deg, #7B2FBE, #5B1F9E);
+    transition: all 0.2s;
+}}
+.btn:hover {{ transform: translateY(-1px); box-shadow: 0 4px 20px rgba(123,47,190,0.4); }}
+.btn-primary {{ width: 100%; background: linear-gradient(135deg, #7B2FBE, #5B1F9E); color: #fff; font-size: 17px; padding: 16px; border-radius: 12px; }}
+.card {{
+    background: #16213E;
+    border-radius: 16px;
+    padding: 4px;
+    border: 1px solid rgba(123,47,190,0.2);
+}}
+.contract-row {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s;
+}}
+.contract-row:last-child {{ border-bottom: none; }}
+.contract-row:hover {{ background: rgba(123,47,190,0.06); }}
+.cr-title {{ font-size: 15px; font-weight: 600; color: #fff; }}
+.cr-meta {{ font-size: 12px; color: #888; margin-top: 4px; }}
+.cr-right {{ text-align: right; flex-shrink: 0; }}
+.cr-date {{ font-size: 11px; color: #666; margin-top: 4px; }}
+.badge {{
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+.badge-pending {{ background: rgba(255,193,7,0.15); color: #FFC107; }}
+.badge-partial {{ background: rgba(76,201,240,0.15); color: #4CC9F0; }}
+.badge-complete {{ background: rgba(76,175,80,0.15); color: #4CAF50; }}
+.footer {{
+    text-align: center;
+    padding: 24px 0;
+    font-size: 12px;
+    color: #555;
+}}
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <a href="/" class="logo">Pon</a>
+        <a href="/" class="btn">+ 新規作成</a>
+    </div>
+    <div class="card">
+        {rows_html}
+    </div>
+    <div class="footer">
+        Powered by Pon &mdash; Secure Digital Contracts
+    </div>
+</div>
+</body>
+</html>"##))
+}
+
 async fn create_contract(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateContractRequest>,
 ) -> Result<(StatusCode, Json<CreateContractResponse>), (StatusCode, Json<ErrorResponse>)> {
     let id = uuid::Uuid::new_v4().to_string();
-    let token = uuid::Uuid::new_v4().to_string();
+    // Custom token only allowed with valid admin key
+    let admin_secret = env::var("ADMIN_KEY").unwrap_or_else(|_| "".to_string());
+    let token = if let (Some(tok), Some(key)) = (&req.token, &req.admin_key) {
+        if !admin_secret.is_empty() && key == &admin_secret {
+            tok.clone()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        }
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let creator_name = req.creator_name.unwrap_or_else(|| "Yuki Hamada".to_string());
     let amount = req.amount.unwrap_or(0);
     let currency = req.currency.unwrap_or_else(|| "JPY".to_string());
@@ -128,10 +812,18 @@ async fn create_contract(
     let ua = extract_ua(&headers);
 
     let db = state.db.lock().unwrap();
-    db.execute(
-        "INSERT INTO contracts (id, token, title, client_name, client_email, contract_type, amount, currency, start_date, end_date, body_text, creator_name, attachments_json, document_hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        rusqlite::params![id, token, req.title, req.client_name, req.client_email, req.contract_type, amount, currency, req.start_date, req.end_date, req.body_text, creator_name, attachments, document_hash],
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    let insert_result = db.execute(
+        "INSERT INTO contracts (id, token, title, client_name, client_email, creator_email, contract_type, amount, currency, start_date, end_date, body_text, creator_name, attachments_json, document_hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        rusqlite::params![id, token, req.title, req.client_name, req.client_email, req.creator_email, req.contract_type, amount, currency, req.start_date, req.end_date, req.body_text, creator_name, attachments, document_hash],
+    );
+    // If token already exists (UNIQUE constraint), return 409 with existing sign URL
+    if let Err(ref e) = insert_result {
+        if e.to_string().contains("UNIQUE") {
+            let sign_url = format!("{}/sign/{}", state.base_url, token);
+            return Ok((StatusCode::CONFLICT, Json(CreateContractResponse { id: token.clone(), token, sign_url })));
+        }
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })));
+    }
 
     db::append_audit_log(&db, &id, "contract_created", &ip, &ua, &format!("document_hash: {}", document_hash));
 
@@ -145,6 +837,33 @@ async fn create_contract(
             sign_url,
         }),
     ))
+}
+
+async fn get_contract_by_token(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Result<Json<ContractResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db
+        .prepare("SELECT id, token, title, client_name, client_email, contract_type, amount, currency, start_date, end_date, body_text, creator_name, creator_signature, client_signature, creator_signed_at, client_signed_at, status, created_at, attachments_json FROM contracts WHERE token = ?1")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    let contract = stmt
+        .query_row(rusqlite::params![token], |row| {
+            let tok: String = row.get(1)?;
+            let sign_url = format!("{}/sign/{}", "https://pon-sign.fly.dev", tok);
+            Ok(ContractResponse {
+                id: row.get(0)?, token: tok, title: row.get(2)?, client_name: row.get(3)?,
+                client_email: row.get(4)?, contract_type: row.get(5)?, amount: row.get(6)?,
+                currency: row.get(7)?, start_date: row.get(8)?, end_date: row.get(9)?,
+                body_text: row.get(10)?, creator_name: row.get(11)?,
+                creator_signature: row.get(12)?, client_signature: row.get(13)?,
+                creator_signed_at: row.get(14)?, client_signed_at: row.get(15)?,
+                status: row.get(16)?, created_at: row.get(17)?, attachments_json: row.get(18)?,
+                sign_url,
+            })
+        })
+        .map_err(|_| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Contract not found".to_string() })))?;
+    Ok(Json(contract))
 }
 
 async fn get_contract(
@@ -286,12 +1005,21 @@ async fn submit_signature(
     Json(req): Json<SignRequest>,
 ) -> Result<Json<SignResponse>, (StatusCode, Json<ErrorResponse>)> {
     if req.signer != "creator" && req.signer != "client" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "signer must be 'creator' or 'client'".to_string(),
-            }),
-        ));
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "signer must be 'creator' or 'client'".to_string() })));
+    }
+    // Rate limit: max 10 sign attempts per token per hour
+    let ip = extract_ip(&headers);
+    let rate_key = format!("sign:{}:{}", token, ip);
+    if !check_rate_limit(&state.rate_limiter, &rate_key, 10, 3600) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse { error: "試行回数が多すぎます。しばらく待ってから再試行してください。".to_string() })));
+    }
+    // Signature size limit: 2MB base64
+    if req.signature.len() > 2 * 1024 * 1024 {
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, Json(ErrorResponse { error: "署名データが大きすぎます".to_string() })));
+    }
+    // Basic signature format validation
+    if !req.signature.starts_with("data:image/") && !req.signature.starts_with("data:application/") {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "無効な署名フォーマットです".to_string() })));
     }
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -402,6 +1130,46 @@ async fn submit_signature(
         status: new_status.to_string(),
         message: message.to_string(),
     }))
+}
+
+async fn verify_email(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Json(req): Json<VerifyEmailRequest>,
+) -> Json<serde_json::Value> {
+    let email = req.email.trim().to_lowercase();
+    let db = state.db.lock().unwrap();
+    let result: Result<(Option<String>, Option<String>, String, String), _> = db.query_row(
+        "SELECT client_email, creator_email, client_name, creator_name FROM contracts WHERE token = ?1",
+        rusqlite::params![token],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    );
+    drop(db);
+
+    match result {
+        Err(_) => Json(serde_json::json!({"ok": false, "error": "Contract not found"})),
+        Ok((client_email, creator_email, client_name, creator_name)) => {
+            let client_match = client_email.as_deref()
+                .map(|e| e.trim().to_lowercase() == email)
+                .unwrap_or(false);
+            let creator_match = creator_email.as_deref()
+                .map(|e| e.trim().to_lowercase() == email)
+                .unwrap_or(false);
+            let no_emails = client_email.as_deref().unwrap_or("").is_empty()
+                && creator_email.as_deref().unwrap_or("").is_empty();
+
+            if client_match {
+                Json(serde_json::json!({"ok": true, "role": "client", "name": client_name}))
+            } else if creator_match {
+                Json(serde_json::json!({"ok": true, "role": "creator", "name": creator_name}))
+            } else if no_emails {
+                // No emails configured — allow anyone, role unknown
+                Json(serde_json::json!({"ok": true, "role": "unknown", "name": ""}))
+            } else {
+                Json(serde_json::json!({"ok": false, "error": "メールアドレスが一致しません"}))
+            }
+        }
+    }
 }
 
 async fn verify_contract(
@@ -569,23 +1337,35 @@ fn render_sign_page(
         }})();
         </script>"#)
     } else {
-        let signer_options = if !creator_signed && !client_signed {
-            r#"<div class="signer-select">
-                <label><input type="radio" name="signer" value="creator" checked> 甲（作成者）として署名</label>
-                <label><input type="radio" name="signer" value="client"> 乙（署名者）として署名</label>
-            </div>"#.to_string()
-        } else if !creator_signed {
-            r#"<input type="hidden" name="signer" value="creator">
-            <p class="signer-info">甲（作成者）として署名してください</p>"#.to_string()
+        // pre-determine signer based on who has already signed
+        let forced_signer = if creator_signed && !client_signed {
+            "client"
+        } else if !creator_signed && client_signed {
+            "creator"
         } else {
-            r#"<input type="hidden" name="signer" value="client">
-            <p class="signer-info">乙（署名者）として署名してください</p>"#.to_string()
+            ""  // both unsigned: determine from email
         };
 
         format!(r##"
-        <div class="canvas-section">
+        <!-- Step 1: Email verification -->
+        <div id="email-step" class="canvas-section">
+            <h3>本人確認</h3>
+            <p style="font-size:13px;color:#aaa;margin-bottom:16px;">署名する前にメールアドレスを入力してください</p>
+            <input type="email" id="verify-email-input" placeholder="your@email.com"
+                style="width:100%;padding:14px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);
+                       border-radius:10px;color:#e0e0e0;font-size:16px;outline:none;margin-bottom:12px;">
+            <div id="email-error" style="color:#f44;font-size:13px;margin-bottom:12px;display:none;"></div>
+            <button type="button" id="btn-verify-email" class="btn btn-primary">確認して署名へ進む</button>
+            <div id="email-loading" class="loading" style="display:none;">
+                <div class="spinner"></div><span>確認中...</span>
+            </div>
+        </div>
+
+        <!-- Step 2: Signature canvas (hidden until email verified) -->
+        <div id="sig-step" class="canvas-section" style="display:none;">
             <h3>署名欄</h3>
-            {signer_options}
+            <p id="signer-info-label" class="signer-info"></p>
+            <input type="hidden" id="resolved-signer" value="{forced_signer}">
             <div class="canvas-wrapper">
                 <canvas id="sig-canvas" width="400" height="200"></canvas>
             </div>
@@ -595,177 +1375,190 @@ fn render_sign_page(
             </div>
             <label style="display:flex;align-items:flex-start;gap:10px;margin:16px 0;font-size:13px;color:#ccc;cursor:pointer;line-height:1.6;">
                 <input type="checkbox" id="agree-check" style="margin-top:4px;accent-color:#7B2FBE;width:18px;height:18px;flex-shrink:0;">
-                本契約書の内容を確認し、電子署名法に基づく電子署名として、法的拘束力を持つことを理解した上で署名します。
+                本契約書の内容を確認し、電子署名法に基づく電子署名として法的拘束力を持つことを理解した上で署名します。
             </label>
             <button type="button" id="btn-sign" class="btn btn-primary" disabled style="opacity:0.4;">署名する</button>
             <script>document.getElementById('agree-check').addEventListener('change',function(){{const b=document.getElementById('btn-sign');b.disabled=!this.checked;b.style.opacity=this.checked?'1':'0.4';}});</script>
             <div id="loading" class="loading" style="display:none;">
-                <div class="spinner"></div>
-                <span>送信中...</span>
+                <div class="spinner"></div><span>送信中...</span>
             </div>
             <div id="success-msg" class="success-msg" style="display:none;">
                 <div class="success-icon">&#10003;</div>
                 <p>署名が完了しました!</p>
             </div>
         </div>
+
         <script>
         (function() {{
-            const canvas = document.getElementById('sig-canvas');
-            const ctx = canvas.getContext('2d');
             const token = '{token}';
-            let drawing = false;
-            let paths = [];
-            let currentPath = [];
 
-            // High DPI support
-            const dpr = window.devicePixelRatio || 1;
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-            ctx.scale(dpr, dpr);
-            canvas.style.width = rect.width + 'px';
-            canvas.style.height = rect.height + 'px';
+            // --- Email verification ---
+            const emailInput = document.getElementById('verify-email-input');
+            const btnVerify = document.getElementById('btn-verify-email');
+            const emailError = document.getElementById('email-error');
+            const emailLoading = document.getElementById('email-loading');
 
-            function getPos(e) {{
-                const r = canvas.getBoundingClientRect();
-                const t = e.touches ? e.touches[0] : e;
-                return {{ x: t.clientX - r.left, y: t.clientY - r.top }};
-            }}
-
-            function startDraw(e) {{
-                e.preventDefault();
-                drawing = true;
-                currentPath = [getPos(e)];
-            }}
-
-            function draw(e) {{
-                if (!drawing) return;
-                e.preventDefault();
-                const p = getPos(e);
-                currentPath.push(p);
-                redraw();
-            }}
-
-            function endDraw(e) {{
-                if (!drawing) return;
-                e.preventDefault();
-                drawing = false;
-                if (currentPath.length > 1) {{
-                    paths.push([...currentPath]);
-                }}
-                currentPath = [];
-            }}
-
-            function redraw() {{
-                ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-                ctx.strokeStyle = '#1a1a2e';
-                ctx.lineWidth = 2;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                const allPaths = [...paths, currentPath];
-                for (const path of allPaths) {{
-                    if (path.length < 2) continue;
-                    ctx.beginPath();
-                    ctx.moveTo(path[0].x, path[0].y);
-                    for (let i = 1; i < path.length; i++) {{
-                        const mid = {{
-                            x: (path[i-1].x + path[i].x) / 2,
-                            y: (path[i-1].y + path[i].y) / 2
-                        }};
-                        ctx.quadraticCurveTo(path[i-1].x, path[i-1].y, mid.x, mid.y);
-                    }}
-                    ctx.stroke();
-                }}
-            }}
-
-            canvas.addEventListener('mousedown', startDraw);
-            canvas.addEventListener('mousemove', draw);
-            canvas.addEventListener('mouseup', endDraw);
-            canvas.addEventListener('mouseleave', endDraw);
-            canvas.addEventListener('touchstart', startDraw, {{ passive: false }});
-            canvas.addEventListener('touchmove', draw, {{ passive: false }});
-            canvas.addEventListener('touchend', endDraw);
-
-            document.getElementById('btn-clear').addEventListener('click', function() {{
-                paths = [];
-                currentPath = [];
-                redraw();
+            // Allow Enter key in email input
+            emailInput.addEventListener('keydown', function(e) {{
+                if (e.key === 'Enter') btnVerify.click();
             }});
 
-            document.getElementById('btn-undo').addEventListener('click', function() {{
-                paths.pop();
-                redraw();
-            }});
-
-            document.getElementById('btn-sign').addEventListener('click', async function() {{
-                if (paths.length === 0) {{
-                    alert('署名を描いてください');
+            btnVerify.addEventListener('click', async function() {{
+                const email = emailInput.value.trim();
+                if (!email || !email.includes('@')) {{
+                    emailError.textContent = '有効なメールアドレスを入力してください';
+                    emailError.style.display = 'block';
                     return;
                 }}
-
-                const signerEl = document.querySelector('input[name="signer"]:checked') || document.querySelector('input[name="signer"]');
-                const signer = signerEl.value;
-
-                // Export at 1x for clean PNG
-                const exportCanvas = document.createElement('canvas');
-                exportCanvas.width = 400;
-                exportCanvas.height = 200;
-                const ectx = exportCanvas.getContext('2d');
-                ectx.fillStyle = '#ffffff';
-                ectx.fillRect(0, 0, 400, 200);
-                ectx.strokeStyle = '#1a1a2e';
-                ectx.lineWidth = 2;
-                ectx.lineCap = 'round';
-                ectx.lineJoin = 'round';
-                for (const path of paths) {{
-                    if (path.length < 2) continue;
-                    ectx.beginPath();
-                    ectx.moveTo(path[0].x, path[0].y);
-                    for (let i = 1; i < path.length; i++) {{
-                        const mid = {{
-                            x: (path[i-1].x + path[i].x) / 2,
-                            y: (path[i-1].y + path[i].y) / 2
-                        }};
-                        ectx.quadraticCurveTo(path[i-1].x, path[i-1].y, mid.x, mid.y);
-                    }}
-                    ectx.stroke();
-                }}
-                const signature = exportCanvas.toDataURL('image/png');
-
-                document.getElementById('loading').style.display = 'flex';
-                document.getElementById('btn-sign').style.display = 'none';
+                emailError.style.display = 'none';
+                btnVerify.style.display = 'none';
+                emailLoading.style.display = 'flex';
 
                 try {{
-                    const res = await fetch('/api/sign/' + token, {{
+                    const res = await fetch('/api/sign/' + token + '/verify-email', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify({{ signer, signature }})
+                        body: JSON.stringify({{ email }})
                     }});
                     const data = await res.json();
-                    document.getElementById('loading').style.display = 'none';
-                    if (data.success) {{
-                        document.getElementById('success-msg').style.display = 'block';
-                        document.querySelector('.canvas-section h3').textContent = '署名完了';
-                        document.querySelector('.canvas-wrapper').style.display = 'none';
-                        document.querySelector('.canvas-buttons').style.display = 'none';
-                        const sel = document.querySelector('.signer-select');
-                        if (sel) sel.style.display = 'none';
-                        const info = document.querySelector('.signer-info');
-                        if (info) info.style.display = 'none';
-                        if (data.status === 'completed') {{
-                            setTimeout(() => location.reload(), 1500);
-                        }}
+                    emailLoading.style.display = 'none';
+                    if (data.ok) {{
+                        document.getElementById('email-step').style.display = 'none';
+                        document.getElementById('sig-step').style.display = 'block';
+                        // Set signer role
+                        const forcedSigner = document.getElementById('resolved-signer').value;
+                        let signer = forcedSigner;
+                        if (!signer && data.role !== 'unknown') signer = data.role;
+                        if (!signer) signer = 'client'; // default
+                        document.getElementById('resolved-signer').value = signer;
+                        const label = signer === 'creator' ? '甲（作成者）として署名します' : '乙（署名者）として署名します';
+                        document.getElementById('signer-info-label').textContent = label;
+                        initCanvas();
                     }} else {{
-                        alert('エラー: ' + (data.error || '署名に失敗しました'));
-                        document.getElementById('btn-sign').style.display = 'block';
+                        emailError.textContent = data.error || 'メールアドレスが確認できません';
+                        emailError.style.display = 'block';
+                        btnVerify.style.display = 'block';
                     }}
                 }} catch(err) {{
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('btn-sign').style.display = 'block';
-                    alert('通信エラー: ' + err.message);
+                    emailLoading.style.display = 'none';
+                    emailError.textContent = '通信エラー: ' + err.message;
+                    emailError.style.display = 'block';
+                    btnVerify.style.display = 'block';
                 }}
             }});
+
+            // --- Signature canvas ---
+            function initCanvas() {{
+                const canvas = document.getElementById('sig-canvas');
+                const ctx = canvas.getContext('2d');
+                let drawing = false;
+                let paths = [];
+                let currentPath = [];
+
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.scale(dpr, dpr);
+                canvas.style.width = rect.width + 'px';
+                canvas.style.height = rect.height + 'px';
+
+                function getPos(e) {{
+                    const r = canvas.getBoundingClientRect();
+                    const t = e.touches ? e.touches[0] : e;
+                    return {{ x: t.clientX - r.left, y: t.clientY - r.top }};
+                }}
+                function startDraw(e) {{ e.preventDefault(); drawing = true; currentPath = [getPos(e)]; }}
+                function draw(e) {{
+                    if (!drawing) return;
+                    e.preventDefault();
+                    currentPath.push(getPos(e));
+                    redraw();
+                }}
+                function endDraw(e) {{
+                    if (!drawing) return;
+                    e.preventDefault();
+                    drawing = false;
+                    if (currentPath.length > 1) paths.push([...currentPath]);
+                    currentPath = [];
+                }}
+                function redraw() {{
+                    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+                    ctx.strokeStyle = '#1a1a2e';
+                    ctx.lineWidth = 2.5;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    for (const path of [...paths, currentPath]) {{
+                        if (path.length < 2) continue;
+                        ctx.beginPath();
+                        ctx.moveTo(path[0].x, path[0].y);
+                        for (let i = 1; i < path.length; i++) {{
+                            const mid = {{ x: (path[i-1].x + path[i].x) / 2, y: (path[i-1].y + path[i].y) / 2 }};
+                            ctx.quadraticCurveTo(path[i-1].x, path[i-1].y, mid.x, mid.y);
+                        }}
+                        ctx.stroke();
+                    }}
+                }}
+                canvas.addEventListener('mousedown', startDraw);
+                canvas.addEventListener('mousemove', draw);
+                canvas.addEventListener('mouseup', endDraw);
+                canvas.addEventListener('mouseleave', endDraw);
+                canvas.addEventListener('touchstart', startDraw, {{ passive: false }});
+                canvas.addEventListener('touchmove', draw, {{ passive: false }});
+                canvas.addEventListener('touchend', endDraw);
+                document.getElementById('btn-clear').addEventListener('click', () => {{ paths=[]; currentPath=[]; redraw(); }});
+                document.getElementById('btn-undo').addEventListener('click', () => {{ paths.pop(); redraw(); }});
+
+                document.getElementById('btn-sign').addEventListener('click', async function() {{
+                    if (paths.length === 0) {{ alert('署名を描いてください'); return; }}
+                    const signer = document.getElementById('resolved-signer').value || 'client';
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = 400; exportCanvas.height = 200;
+                    const ectx = exportCanvas.getContext('2d');
+                    ectx.fillStyle = '#ffffff';
+                    ectx.fillRect(0, 0, 400, 200);
+                    ectx.strokeStyle = '#1a1a2e';
+                    ectx.lineWidth = 2.5;
+                    ectx.lineCap = 'round';
+                    ectx.lineJoin = 'round';
+                    for (const path of paths) {{
+                        if (path.length < 2) continue;
+                        ectx.beginPath();
+                        ectx.moveTo(path[0].x, path[0].y);
+                        for (let i = 1; i < path.length; i++) {{
+                            const mid = {{ x: (path[i-1].x + path[i].x) / 2, y: (path[i-1].y + path[i].y) / 2 }};
+                            ectx.quadraticCurveTo(path[i-1].x, path[i-1].y, mid.x, mid.y);
+                        }}
+                        ectx.stroke();
+                    }}
+                    const signature = exportCanvas.toDataURL('image/png');
+                    document.getElementById('loading').style.display = 'flex';
+                    document.getElementById('btn-sign').style.display = 'none';
+                    try {{
+                        const res = await fetch('/api/sign/' + token, {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ signer, signature }})
+                        }});
+                        const data = await res.json();
+                        document.getElementById('loading').style.display = 'none';
+                        if (data.success) {{
+                            document.getElementById('success-msg').style.display = 'block';
+                            document.querySelector('#sig-step h3').textContent = '署名完了';
+                            document.querySelector('.canvas-wrapper').style.display = 'none';
+                            document.querySelector('.canvas-buttons').style.display = 'none';
+                            if (data.status === 'completed') {{ setTimeout(() => location.reload(), 1500); }}
+                        }} else {{
+                            alert('エラー: ' + (data.error || '署名に失敗しました'));
+                            document.getElementById('btn-sign').style.display = 'block';
+                        }}
+                    }} catch(err) {{
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('btn-sign').style.display = 'block';
+                        alert('通信エラー: ' + err.message);
+                    }}
+                }});
+            }}
         }})();
         </script>"##)
     };
@@ -1013,6 +1806,33 @@ body {{
     font-size: 12px;
     color: #555;
 }}
+.app-banner {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(123,47,190,0.1);
+    border: 1px solid rgba(123,47,190,0.25);
+    border-radius: 14px;
+    padding: 14px 18px;
+    margin-bottom: 12px;
+}}
+.app-banner-title {{ font-size: 14px; font-weight: 700; color: #fff; }}
+.app-banner-sub {{ font-size: 11px; color: #aaa; margin-top: 2px; }}
+.app-store-btn {{
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #7B2FBE;
+    color: #fff;
+    text-decoration: none;
+    padding: 9px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.2s;
+}}
+.app-store-btn:hover {{ background: #9B4FDE; }}
 @media (max-width: 480px) {{
     .signatures-row {{ grid-template-columns: 1fr; }}
     .card {{ padding: 16px; }}
@@ -1068,6 +1888,16 @@ body {{
         {canvas_section}
     </div>
 
+    <div class="app-banner">
+        <div class="app-banner-text">
+            <div class="app-banner-title">Ponアプリで管理</div>
+            <div class="app-banner-sub">iPhoneで契約書を作成・署名・管理</div>
+        </div>
+        <a href="https://testflight.apple.com/join/XyZdmPVt" target="_blank" class="app-store-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            TestFlightで試す
+        </a>
+    </div>
     <div class="footer">
         Powered by Pon &mdash; Secure Digital Contracts
     </div>
@@ -1084,18 +1914,32 @@ async fn main() {
     let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://pon-sign.fly.dev".to_string());
 
     let db = db::init_db(&data_dir);
-    let state = AppState { db, base_url };
+    let rate_limiter: RateLimiter = Arc::new(Mutex::new(HashMap::new()));
+    let state = AppState { db, base_url, rate_limiter };
 
-    let cors = CorsLayer::permissive();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            let o = origin.as_bytes();
+            o == b"https://pon-sign.fly.dev"
+                || o.starts_with(b"http://localhost")
+                || o.starts_with(b"http://127.0.0.1")
+        }))
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
 
     let app = Router::new()
-        .route("/", get(health))
+        .route("/", get(landing_page))
         .route("/health", get(health))
+        .route("/privacy", get(privacy_page))
+        .route("/terms", get(terms_page))
+        .route("/dashboard", get(dashboard_page))
         .route("/api/contracts", post(create_contract))
         .route("/api/contracts/{id}", get(get_contract))
+        .route("/api/contracts/token/{token}", get(get_contract_by_token))
         .route("/api/contracts/{id}/pdf", get(download_pdf))
         .route("/api/contracts/{id}/verify", get(verify_contract))
         .route("/api/sign/{token}", post(submit_signature))
+        .route("/api/sign/{token}/verify-email", post(verify_email))
         .route("/api/templates", get(get_templates))
         .route("/sign/{token}", get(sign_page))
         .layer(cors)

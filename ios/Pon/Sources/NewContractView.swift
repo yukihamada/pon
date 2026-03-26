@@ -585,15 +585,40 @@ struct NewContractView: View {
             aiGenerated: aiGenerated
         )
         c.contractNumber = Contract.generateNumber(date: startDate, count: all.count)
-        // Add attachments
-        for name in attachmentNames {
-            c.addAttachment(name)
-        }
+        for name in attachmentNames { c.addAttachment(name) }
         context.insert(c)
+        // Sync to server so the web signing URL works
+        syncContractToServer(c)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         SoundPlayer.shared.play("pon")
         showCelebration = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { dismiss() }
+    }
+
+    private func syncContractToServer(_ c: Contract) {
+        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let df = ISO8601DateFormatter()
+        df.formatOptions = [.withFullDate]
+        var body: [String: Any] = [
+            "token": c.signingToken,
+            "title": c.title,
+            "client_name": c.clientName,
+            "contract_type": c.contractType,
+            "amount": c.amount,
+            "currency": c.currency,
+            "body_text": c.bodyText.isEmpty ? "(本文未入力)" : c.bodyText,
+            "creator_name": UserDefaults.standard.string(forKey: "ownerName") ?? "作成者",
+            "start_date": df.string(from: c.startDate),
+        ]
+        if !c.clientEmail.isEmpty { body["client_email"] = c.clientEmail }
+        if let end = c.endDate { body["end_date"] = df.string(from: end) }
+        let creatorEmail = UserDefaults.standard.string(forKey: "ownerEmail") ?? ""
+        if !creatorEmail.isEmpty { body["creator_email"] = creatorEmail }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     // MARK: - Helpers
