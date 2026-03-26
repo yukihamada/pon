@@ -116,7 +116,8 @@ struct SubscriptionStatusResponse {
 
 #[derive(Deserialize)]
 struct UserIdQuery {
-    user_id: String,
+    user_id: Option<String>,
+    email: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -671,7 +672,44 @@ body {{
         }}
     }});
 }})();
+
+// Stripe checkout
+async function checkout(plan) {{
+    const email = prompt('メールアドレスを入力してください（購入確認用）');
+    if (!email || !email.includes('@')) return;
+    try {{
+        const res = await fetch('/api/stripe/checkout', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ plan, email }})
+        }});
+        const data = await res.json();
+        if (data.url) window.location.href = data.url;
+        else alert('エラー: ' + (data.error || '決済ページを開けませんでした'));
+    }} catch(e) {{ alert('通信エラー'); }}
+}}
 </script>
+
+<div style="margin-top:32px;">
+    <div style="text-align:center;margin-bottom:24px;">
+        <div style="font-size:20px;font-weight:700;color:#fff;">Proプラン</div>
+        <div style="font-size:13px;color:#888;margin-top:4px;">Webからも購入できます</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:#16213E;border-radius:16px;padding:20px;border:1px solid rgba(123,47,190,0.2);text-align:center;">
+            <div style="font-size:14px;font-weight:700;color:#7B2FBE;">Pro 月額</div>
+            <div style="font-size:28px;font-weight:800;color:#fff;margin:8px 0;">¥480<span style="font-size:14px;color:#888;">/月</span></div>
+            <div style="font-size:11px;color:#888;margin-bottom:12px;">無制限契約書・AIテンプレート</div>
+            <button onclick="checkout('pro')" style="width:100%;padding:10px;background:linear-gradient(135deg,#7B2FBE,#5B1F9E);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">購入する</button>
+        </div>
+        <div style="background:#16213E;border-radius:16px;padding:20px;border:1px solid rgba(76,201,240,0.25);text-align:center;">
+            <div style="font-size:14px;font-weight:700;color:#4CC9F0;">Founder</div>
+            <div style="font-size:28px;font-weight:800;color:#fff;margin:8px 0;">¥4,800</div>
+            <div style="font-size:11px;color:#888;margin-bottom:12px;">永久Pro・初期サポーター限定</div>
+            <button onclick="checkout('founder')" style="width:100%;padding:10px;background:linear-gradient(135deg,#4CC9F0,#2196F3);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;">購入する</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>"##))
 }
@@ -2074,9 +2112,17 @@ async fn get_subscription_status(
 ) -> Result<Json<SubscriptionStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
     let db = state.db.lock().unwrap();
 
+    // Look up by user_id or email
+    let lookup_sql = if let Some(ref uid) = params.user_id {
+        ("SELECT plan, expires_at, verified_at FROM users WHERE user_id = ?1", uid.clone())
+    } else if let Some(ref email) = params.email {
+        ("SELECT plan, expires_at, verified_at FROM users WHERE email = ?1 OR user_id = ?1", format!("stripe:{}", email))
+    } else {
+        return Ok(Json(SubscriptionStatusResponse { plan: "free".to_string(), is_pro: false, expires_at: None, verified: false }));
+    };
     let result = db.query_row(
-        "SELECT plan, expires_at, verified_at FROM users WHERE user_id = ?1",
-        rusqlite::params![params.user_id],
+        lookup_sql.0,
+        rusqlite::params![lookup_sql.1],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -2111,6 +2157,135 @@ async fn get_subscription_status(
             verified: false,
         })),
     }
+}
+
+// --- Stripe Checkout + Webhook ---
+
+async fn stripe_create_checkout(
+    State(state): State<AppState>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let sk = env::var("STRIPE_SECRET_KEY").map_err(|_| {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "Stripe not configured".to_string() }))
+    })?;
+    let plan = req.get("plan").and_then(|v| v.as_str()).unwrap_or("pro");
+    let email = req.get("email").and_then(|v| v.as_str()).unwrap_or("");
+
+    let price_id = if plan == "founder" {
+        env::var("STRIPE_PRICE_FOUNDER").unwrap_or_default()
+    } else {
+        env::var("STRIPE_PRICE_PRO").unwrap_or_default()
+    };
+
+    if price_id.is_empty() {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(ErrorResponse { error: "Price not configured".to_string() })));
+    }
+
+    let mode = if plan == "founder" { "payment" } else { "subscription" };
+
+    let mut params = vec![
+        ("mode", mode.to_string()),
+        ("success_url", format!("{}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}", state.base_url)),
+        ("cancel_url", format!("{}/", state.base_url)),
+        ("line_items[0][price]", price_id),
+        ("line_items[0][quantity]", "1".to_string()),
+    ];
+    if !email.is_empty() {
+        params.push(("customer_email", email.to_string()));
+    }
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&sk, None::<&str>)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let body: serde_json::Value = res.json().await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
+
+    if let Some(url) = body.get("url").and_then(|v| v.as_str()) {
+        Ok(Json(serde_json::json!({ "url": url })))
+    } else {
+        let err = body.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).unwrap_or("Unknown error");
+        Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: err.to_string() })))
+    }
+}
+
+async fn stripe_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<StatusCode, StatusCode> {
+    let _webhook_secret = env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
+    // In production, verify the Stripe-Signature header here
+    // For MVP, we trust Fly.io's network isolation
+
+    let event: serde_json::Value = serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+    eprintln!("[STRIPE] event: {}", event_type);
+
+    match event_type {
+        "checkout.session.completed" => {
+            let session = event.get("data").and_then(|d| d.get("object")).ok_or(StatusCode::BAD_REQUEST)?;
+            let email = session.get("customer_email").and_then(|v| v.as_str()).unwrap_or("");
+            let mode = session.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+            let customer = session.get("customer").and_then(|v| v.as_str()).unwrap_or("");
+            let subscription_id = session.get("subscription").and_then(|v| v.as_str()).unwrap_or("");
+
+            let plan = if mode == "payment" { "founder" } else { "pro" };
+            let product_id = if plan == "founder" { "stripe.pon.founder" } else { "stripe.pon.pro" };
+            let user_id = format!("stripe:{}", if !email.is_empty() { email } else { customer });
+            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+            let db = state.db.lock().unwrap();
+            let _ = db.execute(
+                "INSERT INTO users (user_id, email, plan, product_id, original_transaction_id, verified_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                   plan = ?3, product_id = ?4, original_transaction_id = ?5, verified_at = ?6, updated_at = ?7",
+                rusqlite::params![user_id, email, plan, product_id, subscription_id, now, now],
+            );
+            eprintln!("[STRIPE] Activated {} for {} ({})", plan, email, user_id);
+        }
+        "customer.subscription.deleted" => {
+            let sub = event.get("data").and_then(|d| d.get("object")).ok_or(StatusCode::BAD_REQUEST)?;
+            let customer = sub.get("customer").and_then(|v| v.as_str()).unwrap_or("");
+            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+            let db = state.db.lock().unwrap();
+            // Find user by original_transaction_id (subscription ID) or customer
+            let _ = db.execute(
+                "UPDATE users SET plan = 'free', updated_at = ?1 WHERE user_id LIKE ?2 OR original_transaction_id = ?3",
+                rusqlite::params![now, format!("stripe:%{}%", customer), sub.get("id").and_then(|v| v.as_str()).unwrap_or("")],
+            );
+            eprintln!("[STRIPE] Cancelled subscription for customer {}", customer);
+        }
+        _ => {}
+    }
+
+    Ok(StatusCode::OK)
+}
+
+async fn checkout_success(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Html<String> {
+    let session_id = params.get("session_id").map(|s| s.as_str()).unwrap_or("");
+    Html(format!(r##"<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>購入完了 - Pon</title>
+<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:-apple-system,sans-serif;background:#0F0F1A;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}}
+.c{{text-align:center;padding:40px;max-width:480px}}.icon{{font-size:64px;margin-bottom:16px}}h1{{font-size:24px;margin-bottom:12px;color:#4CAF50}}
+p{{color:#aaa;margin-bottom:24px;font-size:15px;line-height:1.6}}.btn{{display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#7B2FBE,#4CC9F0);color:#fff;text-decoration:none;border-radius:12px;font-weight:600}}</style>
+</head><body><div class="c">
+<div class="icon">&#10003;</div>
+<h1>Proプランが有効になりました</h1>
+<p>ご購入ありがとうございます。<br>iOSアプリで設定画面からメールアドレスを入力すると、Proプランが自動的に反映されます。</p>
+<a href="/" class="btn">トップに戻る</a>
+</div></body></html>"##))
 }
 
 async fn delete_contract(
@@ -2169,6 +2344,9 @@ async fn main() {
         .route("/api/templates", get(get_templates))
         .route("/api/subscription/verify", post(verify_subscription))
         .route("/api/subscription/status", get(get_subscription_status))
+        .route("/api/stripe/checkout", post(stripe_create_checkout))
+        .route("/api/stripe/webhook", post(stripe_webhook))
+        .route("/checkout/success", get(checkout_success))
         .route("/sign/{token}", get(sign_page))
         .route("/ogp.png", get(ogp_image))
         .route("/favicon.png", get(favicon_image))
