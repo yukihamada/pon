@@ -64,6 +64,23 @@ pub fn init_db(data_dir: &str) -> Db {
         let _ = conn.execute_batch(&sql);
     }
 
+    // Users table for subscription verification
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            email TEXT,
+            plan TEXT DEFAULT 'free',
+            product_id TEXT,
+            original_transaction_id TEXT,
+            expires_at TEXT,
+            verified_at TEXT,
+            raw_jws TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        );",
+    )
+    .expect("Failed to create users table");
+
     Arc::new(Mutex::new(conn))
 }
 

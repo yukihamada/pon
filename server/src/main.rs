@@ -96,6 +96,29 @@ struct VerifyEmailRequest {
     email: String,
 }
 
+#[derive(Deserialize)]
+struct VerifySubscriptionRequest {
+    user_id: String,
+    product_id: String,
+    transaction_id: String,
+    original_transaction_id: Option<String>,
+    jws_representation: Option<String>,
+    expires_date: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SubscriptionStatusResponse {
+    plan: String,
+    is_pro: bool,
+    expires_at: Option<String>,
+    verified: bool,
+}
+
+#[derive(Deserialize)]
+struct UserIdQuery {
+    user_id: String,
+}
+
 #[derive(Serialize)]
 struct CreateContractResponse {
     id: String,
@@ -2002,6 +2025,94 @@ async fn favicon_image() -> impl axum::response::IntoResponse {
     )
 }
 
+// --- Subscription Verification API ---
+
+async fn verify_subscription(
+    State(state): State<AppState>,
+    Json(req): Json<VerifySubscriptionRequest>,
+) -> Result<Json<SubscriptionStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let plan = if req.product_id == "com.enablerdao.pon.founder" {
+        "founder"
+    } else if req.product_id == "com.enablerdao.pon.pro" {
+        "pro"
+    } else {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Unknown product".to_string() })));
+    };
+
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let orig_tx = req.original_transaction_id.as_deref().unwrap_or(&req.transaction_id);
+
+    let db = state.db.lock().unwrap();
+
+    // Upsert user record
+    db.execute(
+        "INSERT INTO users (user_id, plan, product_id, original_transaction_id, expires_at, verified_at, raw_jws, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(user_id) DO UPDATE SET
+           plan = ?2, product_id = ?3, original_transaction_id = ?4,
+           expires_at = ?5, verified_at = ?6, raw_jws = ?7, updated_at = ?8",
+        rusqlite::params![
+            req.user_id, plan, req.product_id, orig_tx,
+            req.expires_date, now, req.jws_representation, now
+        ],
+    ).map_err(|e| {
+        eprintln!("[ERROR] verify_subscription: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Internal error".to_string() }))
+    })?;
+
+    Ok(Json(SubscriptionStatusResponse {
+        plan: plan.to_string(),
+        is_pro: true,
+        expires_at: req.expires_date.clone(),
+        verified: true,
+    }))
+}
+
+async fn get_subscription_status(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<UserIdQuery>,
+) -> Result<Json<SubscriptionStatusResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let db = state.db.lock().unwrap();
+
+    let result = db.query_row(
+        "SELECT plan, expires_at, verified_at FROM users WHERE user_id = ?1",
+        rusqlite::params![params.user_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    );
+
+    match result {
+        Ok((plan, expires_at, _verified_at)) => {
+            let is_pro = plan == "pro" || plan == "founder";
+            // Check if subscription has expired (non-consumable founder never expires)
+            let still_valid = if plan == "founder" {
+                true
+            } else if let Some(ref exp) = expires_at {
+                exp > &chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            } else {
+                false
+            };
+            Ok(Json(SubscriptionStatusResponse {
+                plan,
+                is_pro: is_pro && still_valid,
+                expires_at,
+                verified: true,
+            }))
+        }
+        Err(_) => Ok(Json(SubscriptionStatusResponse {
+            plan: "free".to_string(),
+            is_pro: false,
+            expires_at: None,
+            verified: false,
+        })),
+    }
+}
+
 async fn delete_contract(
     State(state): State<AppState>,
     Path(token): Path<String>,
@@ -2056,6 +2167,8 @@ async fn main() {
         .route("/api/sign/{token}", post(submit_signature))
         .route("/api/sign/{token}/verify-email", post(verify_email))
         .route("/api/templates", get(get_templates))
+        .route("/api/subscription/verify", post(verify_subscription))
+        .route("/api/subscription/status", get(get_subscription_status))
         .route("/sign/{token}", get(sign_page))
         .route("/ogp.png", get(ogp_image))
         .route("/favicon.png", get(favicon_image))

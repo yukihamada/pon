@@ -1,6 +1,7 @@
 import StoreKit
 import SwiftUI
 import CryptoKit
+import UIKit
 
 @MainActor
 class SubscriptionManager: ObservableObject {
@@ -62,10 +63,13 @@ class SubscriptionManager: ObservableObject {
             if tx.productID == Self.proProductID {
                 foundPro = true
                 expirationDate = tx.expirationDate
+                // Verify with server
+                await syncTransactionToServer(tx)
             }
             if tx.productID == Self.founderProductID {
                 foundFounder = true
-                foundPro = true // Founder includes Pro
+                foundPro = true
+                await syncTransactionToServer(tx)
             }
         }
         // Founder activation code also counts
@@ -73,6 +77,45 @@ class SubscriptionManager: ObservableObject {
         isPro = foundPro
         isFounder = foundFounder
         if !foundPro { expirationDate = nil }
+    }
+
+    private func syncTransactionToServer(_ tx: StoreKit.Transaction) async {
+        guard let url = URL(string: "https://pon.enablerdao.com/api/subscription/verify") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let userId = deviceUserId
+        let df = ISO8601DateFormatter()
+        df.formatOptions = [.withInternetDateTime]
+
+        var body: [String: Any] = [
+            "user_id": userId,
+            "product_id": tx.productID,
+            "transaction_id": String(tx.id),
+            "original_transaction_id": String(tx.originalID),
+        ]
+        if let exp = tx.expirationDate {
+            body["expires_date"] = df.string(from: exp)
+        }
+        if let jwsData = try? tx.jsonRepresentation, let jwsStr = String(data: jwsData, encoding: .utf8) {
+            body["jws_representation"] = jwsStr
+        }
+
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        // Fire and forget — don't block UI on network
+        let _ = try? await URLSession.shared.data(for: req)
+    }
+
+    /// Stable device-based user ID (persists across app reinstalls via Keychain would be better,
+    /// but UserDefaults + identifierForVendor is good enough for MVP)
+    private var deviceUserId: String {
+        if let saved = UserDefaults.standard.string(forKey: "pon_user_id") {
+            return saved
+        }
+        let id = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        UserDefaults.standard.set(id, forKey: "pon_user_id")
+        return id
     }
 
     func activateFounder(code: String) -> Bool {
