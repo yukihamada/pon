@@ -8,7 +8,7 @@ import SwiftData
 @MainActor
 class ContractSyncManager {
     static let shared = ContractSyncManager()
-    private let baseURL = "https://pon-sign.fly.dev"
+    private let baseURL = "https://pon.enablerdao.com"
 
     func syncAll(context: ModelContext) {
         let descriptor = FetchDescriptor<Contract>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])

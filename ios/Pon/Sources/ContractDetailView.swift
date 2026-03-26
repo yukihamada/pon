@@ -327,7 +327,7 @@ struct ContractDetailView: View {
     }
 
     private func generateSigningLink() {
-        let urlString = contract.signURL  // https://pon-sign.fly.dev/sign/{signingToken}
+        let urlString = contract.signURL  // https://pon.enablerdao.com/sign/{signingToken}
         UIPasteboard.general.string = urlString
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation { showSignLinkCopied = true }
@@ -367,7 +367,7 @@ struct ContractDetailView: View {
     }
 
     private func syncContractToServer() {
-        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts") else { return }
+        guard let url = URL(string: "https://pon.enablerdao.com/api/contracts") else { return }
         isSyncing = true
         syncMessage = nil
         var req = URLRequest(url: url)
@@ -414,7 +414,7 @@ struct ContractDetailView: View {
     }
 
     private func syncSignatureToServer(token: String, signer: String, signature: String) {
-        guard let url = URL(string: "https://pon-sign.fly.dev/api/sign/\(token)") else { return }
+        guard let url = URL(string: "https://pon.enablerdao.com/api/sign/\(token)") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -423,10 +423,10 @@ struct ContractDetailView: View {
     }
 
     private func fetchStatusFromServer() {
-        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts/\(contract.id)") else { return }
+        guard let url = URL(string: "https://pon.enablerdao.com/api/contracts/\(contract.id)") else { return }
         // Try by id first; the server contract may not match local id, so also try token-based lookup
         // For now we check via sign page endpoint which uses token
-        guard let statusUrl = URL(string: "https://pon-sign.fly.dev/api/contracts/token/\(contract.signingToken)") else { return }
+        guard let statusUrl = URL(string: "https://pon.enablerdao.com/api/contracts/token/\(contract.signingToken)") else { return }
         URLSession.shared.dataTask(with: URLRequest(url: statusUrl)) { data, _, _ in
             guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             DispatchQueue.main.async {

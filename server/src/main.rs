@@ -278,14 +278,14 @@ async fn landing_page(State(state): State<AppState>) -> Html<String> {
 <meta property="og:title" content="Pon - 電子契約サービス">
 <meta property="og:description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://pon-sign.fly.dev">
-<meta property="og:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta property="og:url" content="https://pon.enablerdao.com">
+<meta property="og:image" content="https://pon.enablerdao.com/ogp.png">
 <meta property="og:site_name" content="Pon - 電子契約サービス">
 <meta property="og:locale" content="ja_JP">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Pon - 電子契約サービス">
 <meta name="twitter:description" content="無料で使える電子契約・署名サービス。契約書を作成して、URLを共有するだけ。">
-<meta name="twitter:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta name="twitter:image" content="https://pon.enablerdao.com/ogp.png">
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
 *,*::before,*::after {{ box-sizing:border-box; margin:0; padding:0; }}
@@ -872,7 +872,7 @@ async fn get_contract_by_token(
     let contract = stmt
         .query_row(rusqlite::params![token], |row| {
             let tok: String = row.get(1)?;
-            let sign_url = format!("{}/sign/{}", "https://pon-sign.fly.dev", tok);
+            let sign_url = format!("{}/sign/{}", "https://pon.enablerdao.com", tok);
             Ok(ContractResponse {
                 id: row.get(0)?, token: tok, title: row.get(2)?, client_name: row.get(3)?,
                 client_email: row.get(4)?, contract_type: row.get(5)?, amount: row.get(6)?,
@@ -900,7 +900,7 @@ async fn get_contract(
     let contract = stmt
         .query_row(rusqlite::params![id], |row| {
             let token: String = row.get(1)?;
-            let sign_url = format!("{}/sign/{}", "https://pon-sign.fly.dev", token);
+            let sign_url = format!("{}/sign/{}", "https://pon.enablerdao.com", token);
             Ok(ContractResponse {
                 id: row.get(0)?,
                 token,
@@ -968,7 +968,7 @@ async fn sign_page(
 
     let (id, title, client_name, contract_type, amount, currency, start_date, end_date, body_text, creator_name, creator_sig, client_sig, creator_signed_at, client_signed_at, status, tok) = result.map_err(|_| {
         (StatusCode::NOT_FOUND, Html(r#"<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>契約書が見つかりません - Pon</title>
-<meta property="og:title" content="Pon - 電子契約サービス"><meta property="og:description" content="無料で使える電子契約・署名サービス"><meta property="og:image" content="https://pon-sign.fly.dev/ogp.png"><meta name="twitter:card" content="summary_large_image">
+<meta property="og:title" content="Pon - 電子契約サービス"><meta property="og:description" content="無料で使える電子契約・署名サービス"><meta property="og:image" content="https://pon.enablerdao.com/ogp.png"><meta name="twitter:card" content="summary_large_image">
 <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#0F0F1A;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}.c{text-align:center;padding:40px}h1{font-size:24px;margin-bottom:16px}p{color:#888;margin-bottom:24px;font-size:15px}.btn{display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#7B2FBE,#5B1F9E);color:#fff;text-decoration:none;border-radius:12px;font-weight:600;margin:8px}.btn-s{background:rgba(255,255,255,0.08);color:#ccc}</style></head>
 <body><div class="c"><h1>契約書が見つかりません</h1><p>このURLの契約書は存在しないか、削除されています。</p><a href="/" class="btn">新しい契約書を作成</a><br><a href="https://testflight.apple.com/join/XyZdmPVt" class="btn btn-s">Ponアプリをダウンロード</a></div></body></html>"#.to_string()))
     })?;
@@ -1597,14 +1597,14 @@ fn render_sign_page(
 <meta property="og:title" content="{title} - Pon 電子署名">
 <meta property="og:description" content="{creator_name}さんから署名のリクエストが届いています。Ponで安全に電子署名できます。">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://pon-sign.fly.dev/sign/{token}">
-<meta property="og:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta property="og:url" content="https://pon.enablerdao.com/sign/{token}">
+<meta property="og:image" content="https://pon.enablerdao.com/ogp.png">
 <meta property="og:site_name" content="Pon - 電子契約サービス">
 <meta property="og:locale" content="ja_JP">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{title} - Pon 電子署名">
 <meta name="twitter:description" content="{creator_name}さんから署名のリクエストが届いています。">
-<meta name="twitter:image" content="https://pon-sign.fly.dev/ogp.png">
+<meta name="twitter:image" content="https://pon.enablerdao.com/ogp.png">
 <meta name="description" content="Ponで電子契約書に署名できます。安全・簡単・法的有効な電子署名サービス。">
 <link rel="icon" type="image/png" href="/favicon.png">
 <style>
@@ -1991,7 +1991,7 @@ async fn main() {
     let data_dir = env::var("DATA_DIR").unwrap_or_else(|_| "./data".to_string());
     std::fs::create_dir_all(&data_dir).ok();
 
-    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://pon-sign.fly.dev".to_string());
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://pon.enablerdao.com".to_string());
 
     let db = db::init_db(&data_dir);
     let rate_limiter: RateLimiter = Arc::new(Mutex::new(HashMap::new()));
@@ -2000,7 +2000,8 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             let o = origin.as_bytes();
-            o == b"https://pon-sign.fly.dev"
+            o == b"https://pon.enablerdao.com"
+                || o == b"https://pon.enablerdao.com"
                 || o.starts_with(b"http://localhost")
                 || o.starts_with(b"http://127.0.0.1")
         }))

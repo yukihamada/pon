@@ -30,7 +30,7 @@ final class Contract {
     var aiGenerated: Bool
 
     // Computed
-    var signURL: String { "https://pon-sign.fly.dev/sign/\(signingToken)" }
+    var signURL: String { "https://pon.enablerdao.com/sign/\(signingToken)" }
     var isBothSigned: Bool { creatorSignature != nil && clientSignature != nil }
     var attachmentsList: [String] {
         guard !attachmentPaths.isEmpty,

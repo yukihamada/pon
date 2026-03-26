@@ -596,7 +596,7 @@ struct NewContractView: View {
     }
 
     private func syncContractToServer(_ c: Contract) {
-        guard let url = URL(string: "https://pon-sign.fly.dev/api/contracts") else { return }
+        guard let url = URL(string: "https://pon.enablerdao.com/api/contracts") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
